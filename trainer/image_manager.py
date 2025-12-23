@@ -214,7 +214,7 @@ async def run_trainer_container_text(
     tag: str,
     model: str,
     dataset: str,
-    dataset_type: InstructTextDatasetType | DpoDatasetType | GrpoDatasetType | ChatTemplateDatasetType,
+    dataset_type: InstructTextDatasetType | DpoDatasetType | GrpoDatasetType | ChatTemplateDatasetType | EnvironmentDatasetType,
     task_type: TaskType,
     file_format: FileFormat,
     expected_repo_name: str,
