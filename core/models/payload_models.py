@@ -21,6 +21,8 @@ from core.models.utility_models import TaskMinerResult
 from core.models.utility_models import TaskStatus
 from core.models.utility_models import TaskType
 from core.models.utility_models import TextDatasetType
+from core.models.utility_models import RolloutFunction
+from core.models.utility_models import EnvironmentDatasetType
 from validator.core.models import AllNodeStats
 
 
@@ -62,6 +64,15 @@ class TrainRequestGrpo(TrainRequest):
         min_length=1,
     )
     dataset_type: GrpoDatasetType
+    file_format: FileFormat
+
+class TrainRequestEnvironment(TrainRequest):
+    dataset: str = Field(
+        ...,
+        description="Path to the dataset file or Hugging Face dataset name",
+        min_length=1,
+    )
+    dataset_type: EnvironmentDatasetType
     file_format: FileFormat
 
 
@@ -442,6 +453,18 @@ class GrpoTaskDetails(TaskDetails):
     # Turn off protected namespace for model
     model_config = ConfigDict(protected_namespaces=())
 
+class EnvironmentTaskDetails(TaskDetails):
+    task_type: TaskType = TaskType.ENVIRONMENTTASK
+    base_model_repository: str
+    ds_repo: str
+
+    field_prompt: str = Field(..., description="The column name for the prompt", examples=["prompt"])
+    reward_functions: list[RewardFunction]
+    rollout_function: RolloutFunction
+
+    # Turn off protected namespace for model
+    model_config = ConfigDict(protected_namespaces=())
+
 
 class ImageTaskDetails(TaskDetails):
     task_type: TaskType = TaskType.IMAGETASK
@@ -532,7 +555,7 @@ class AddRewardFunctionRequest(BaseModel):
 
 
 # Type alias for task details types
-AnyTypeTaskDetails = InstructTextTaskDetails | ChatTaskDetails| ImageTaskDetails | DpoTaskDetails | GrpoTaskDetails
+AnyTypeTaskDetails = InstructTextTaskDetails | ChatTaskDetails| ImageTaskDetails | DpoTaskDetails | GrpoTaskDetails | EnvironmentTaskDetails
 
 
 class DstackRunStatus(BaseModel):

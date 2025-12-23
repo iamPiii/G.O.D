@@ -5,7 +5,9 @@ import pandas as pd
 import core.constants as cst
 from core.models.utility_models import DpoDatasetType
 from core.models.utility_models import GrpoDatasetType
-
+from core.models.utility_models import EnvironmentDatasetType
+import json
+from pathlib import Path
 
 def _dpo_format_prompt(row, format_str):
     result = format_str
@@ -98,3 +100,40 @@ def adapt_columns_for_grpo_dataset(dataset_path: str, dataset_type: GrpoDatasetT
         json.dump(output_data, f, indent=2)
 
     print(f"Transformed dataset to adapt to axolotl's `{cst.GRPO_DEFAULT_FIELD_PROMPT}` expected column name.")
+
+
+def adapt_columns_for_environment_dataset(dataset_path: str, dataset_type: EnvironmentDatasetType):
+    """
+    Transform a Environment JSON dataset file to match axolotl's `prompt` expected column name.
+    Args:
+        dataset_path: Path to the JSON dataset file
+        dataset_type: EnvironmentDatasetType with field mappings
+    """
+    with open(dataset_path, 'r') as f:
+        data = json.load(f)
+    df = pd.DataFrame(data)
+    df = df.rename(columns={dataset_type.field_prompt: cst.GRPO_DEFAULT_FIELD_PROMPT})
+    # Remove records where the prompt field is empty or None
+    df = df[df[cst.GRPO_DEFAULT_FIELD_PROMPT].notna() & (df[cst.GRPO_DEFAULT_FIELD_PROMPT] != "")]
+    output_data = df.to_dict(orient='records')
+    with open(dataset_path, 'w') as f:
+        json.dump(output_data, f, indent=2)
+
+    print(f"Transformed dataset to adapt to axolotl's `{cst.GRPO_DEFAULT_FIELD_PROMPT}` expected column name.")
+
+
+def write_environment_task_proxy_dataset(
+    out_path: str,
+    dataset_size: int = 1000,
+    prompt_text: str = "Interact with this environment.",
+    prompt_field: str = "prompt",
+):
+    out_path = Path(out_path)
+    out_path.parent.mkdir(parents=True, exist_ok=True)
+
+    records = [{prompt_field: prompt_text} for _ in range(dataset_size)]
+
+    with out_path.open("w", encoding="utf-8") as f:
+        json.dump(records, f, indent=2, ensure_ascii=False)
+
+    print(f"Wrote {len(records)} records to {out_path} with field '{prompt_field}'")

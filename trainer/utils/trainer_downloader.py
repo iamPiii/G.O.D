@@ -136,7 +136,7 @@ async def main():
     parser.add_argument(
         "--task-type",
         required=True,
-        choices=[TaskType.IMAGETASK.value, TaskType.INSTRUCTTEXTTASK.value, TaskType.DPOTASK.value, TaskType.GRPOTASK.value, TaskType.CHATTASK.value],
+        choices=[TaskType.IMAGETASK.value, TaskType.INSTRUCTTEXTTASK.value, TaskType.DPOTASK.value, TaskType.GRPOTASK.value, TaskType.CHATTASK.value, TaskType.ENVIRONMENTTASK.value],
     )
     parser.add_argument("--dataset", required=True)
     parser.add_argument("--file-format")
@@ -185,6 +185,8 @@ async def main():
             local_dir_use_symlinks=False,
             allow_patterns=["tokenizer_config.json", "spiece.model", "special_tokens_map.json", "config.json"],
         )
+    elif args.task_type == TaskType.ENVIRONMENTTASK.value:
+        model_path = await download_axolotl_base_model(args.model, model_dir)
     else:
         dataset_path, _ = await download_text_dataset(args.task_id, args.dataset, args.file_format, dataset_dir)
         model_path = await download_axolotl_base_model(args.model, model_dir)
