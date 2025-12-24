@@ -127,13 +127,6 @@ FUNC_HASH = "func_hash"
 IS_GENERIC = "is_generic"
 IS_MANUAL = "is_manual"
 
-# Rollout Functions Table Columns
-ROLLOUT_ID = "rollout_id"
-ROLLOUT_FUNC = "rollout_func"
-FUNC_HASH = "func_hash"
-IS_GENERIC = "is_generic"
-IS_MANUAL = "is_manual"
-
 # GRPO Task Functions Table Columns
 REWARD_WEIGHT = "reward_weight"
 
