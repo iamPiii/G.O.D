@@ -1,5 +1,5 @@
 
-def alfworld_rollout_first_prompt_and_completion(prompts: list[str], trainer: GRPOTrainer, max_turns: int = 30) -> dict[str, list]:
+def alfworld_rollout_first_prompt_and_completion(prompts: list[str], trainer, max_turns: int = 30) -> dict[str, list]:
     from trl.experimental.openenv import generate_rollout_completions
     from agentenv.envs import AlfWorldEnvClient
     import contextlib
