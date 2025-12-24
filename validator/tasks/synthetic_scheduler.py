@@ -349,19 +349,6 @@ async def _get_generic_reward_functions(config: Config) -> list[RewardFunction]:
     return reward_functions
 
 
-# TODO Finish this
-async def _get_hardcoded_alfworld_rollout_function(config: Config) -> RolloutFunction:
-    rollout_function = RolloutFunction(
-        rollout_id="1",
-        rollout_function="alfworld_rollout",
-        func_hash="",
-        is_generic=True,
-        is_manual=True,
-    )
-
-    return rollout_function
-
-
 def _randomize_reward_weights(reward_functions: list[RewardFunction]) -> list[RewardFunction]:
     # Generate random weights
     random_weights = [random.uniform(0.1, 10.0) for _ in reward_functions]
