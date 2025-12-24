@@ -28,6 +28,7 @@ core/config/*.yml
 core/config/rewards_*.py
 !core/config/base.yml
 !core/config/base_grpo.yml
+!core/config/base_environment.yml
 core/config/*.toml
 !core/config/base_diffusion_sdxl.toml
 !core/config/base_diffusion_flux.toml

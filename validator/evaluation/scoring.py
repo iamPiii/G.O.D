@@ -40,8 +40,6 @@ from validator.utils.minio import async_minio_client
 
 logger = get_logger(__name__)
 
-
-# NOTE Higher better for env task
 def calculate_miner_ranking_and_scores(
     miner_results: list[MinerResultsText | MinerResultsImage],
 ) -> list[MinerResultsText | MinerResultsImage]:
