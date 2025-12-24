@@ -138,6 +138,9 @@ IS_MANUAL = "is_manual"
 # GRPO Task Functions Table Columns
 REWARD_WEIGHT = "reward_weight"
 
+# Environment Task Functions Table Columns
+ENVIRONMENT_NAME = "environment_name"
+
 # Submissions Table Columns
 SUBMISSION_ID = "submission_id"
 REPO = "repo"
