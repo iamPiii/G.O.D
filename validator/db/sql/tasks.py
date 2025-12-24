@@ -972,7 +972,7 @@ async def get_task_by_id(task_id: UUID, psql_db: PSQLDB) -> AnyTypeTask:
                 {victorious_repo_cte}
                 SELECT
                     tasks.*,
-                    et.field_prompt, et.file_format, et.extra_column,
+                    et.environment_name, et.file_format,
                     COALESCE(tasks.training_repo_backup, victorious_repo.repo) as trained_model_repository
                 FROM {cst.TASKS_TABLE} tasks
                 LEFT JOIN {cst.ENV_TASKS_TABLE} et ON tasks.{cst.TASK_ID} = et.{cst.TASK_ID}
@@ -997,9 +997,8 @@ async def get_task_by_id(task_id: UUID, psql_db: PSQLDB) -> AnyTypeTask:
         elif task_type == TaskType.GRPOTASK.value:
             reward_functions = await get_reward_functions(task_id, psql_db)
             return GrpoTask(**full_task_data, reward_functions=reward_functions)
-        elif task_type == TaskType.ENVIRONMENTTASK.value: # NOTE FIX
-            reward_functions = await get_reward_functions(task_id, psql_db)
-            return EnvTask(**full_task_data, reward_functions=reward_functions)
+        elif task_type == TaskType.ENVIRONMENTTASK.value:
+            return EnvTask(**full_task_data)
         elif task_type == TaskType.CHATTASK.value:
             return ChatTask(**full_task_data)
 
@@ -1139,7 +1138,7 @@ def _get_specific_query_for_task_type(task_type: str) -> str | None:
         """
     elif task_type == TaskType.ENVIRONMENTTASK.value:
         return f"""
-            SELECT t.*, et.field_prompt, et.file_format
+            SELECT t.*, et.environment_name, et.file_format
             FROM {cst.TASKS_TABLE} t
             LEFT JOIN {cst.ENV_TASKS_TABLE} et ON t.{cst.TASK_ID} = et.{cst.TASK_ID}
             WHERE t.{cst.TASK_ID} = ANY($1)
@@ -1165,9 +1164,8 @@ async def _create_task_from_data(
     elif task_type == TaskType.GRPOTASK.value:
         reward_functions = await get_reward_functions(task_id, psql_db, conn)
         return GrpoRawTask(**full_task_data, reward_functions=reward_functions)
-    elif task_type == TaskType.ENVIRONMENTTASK.value: # NOTE FIX
-        reward_functions = await get_reward_functions(task_id, psql_db, conn)
-        return EnvRawTask(**full_task_data, reward_functions=reward_functions)
+    elif task_type == TaskType.ENVIRONMENTTASK.value:
+        return EnvRawTask(**full_task_data)
 
     return None
 
@@ -1275,15 +1273,14 @@ async def get_tasks_by_account_id(psql_db: PSQLDB, account_id: UUID, limit: int 
                 tasks.append(GrpoTask(**task_data, reward_functions=reward_functions))
             elif task_type == TaskType.ENVIRONMENTTASK.value:
                 env_query = f"""
-                    SELECT field_prompt, file_format
+                    SELECT environment_name, file_format
                     FROM {cst.ENV_TASKS_TABLE}
                     WHERE {cst.TASK_ID} = $1
                 """
                 env_row = await connection.fetchrow(env_query, task_data[cst.TASK_ID])
                 if env_row:
                     task_data.update(dict(env_row))
-                reward_functions = await get_reward_functions(task_data[cst.TASK_ID], psql_db)
-                tasks.append(EnvTask(**task_data, reward_functions=reward_functions))
+                tasks.append(EnvTask(**task_data))
         return tasks
 
 

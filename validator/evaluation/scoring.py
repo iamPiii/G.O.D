@@ -189,10 +189,7 @@ def _get_dataset_type(task: AnyTypeRawTask) -> TextDatasetType | None:
         )
     elif task.task_type == TaskType.ENVIRONMENTTASK:
         return EnvironmentDatasetType(
-            field_prompt=task.field_prompt,
-            rollout_function=task.rollout_function,
-            reward_functions=task.reward_functions,
-            extra_column=task.extra_column,
+            environment_name=task.environment_name
         )
     elif task.task_type == TaskType.CHATTASK:
         return ChatTemplateDatasetType(

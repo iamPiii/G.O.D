@@ -437,16 +437,10 @@ async def create_synthetic_env_task(
     current_time = datetime.utcnow()
     end_timestamp = current_time + timedelta(hours=number_of_hours)
 
-    reward_functions = await _get_generic_reward_functions(config)
-    rollout_function = await _get_hardcoded_alfworld_rollout_function(config)
-
     yarn_factor = maybe_get_yarn_factor()
     task = EnvRawTask(
         model_id=model_id,
         ds=dataset.dataset_id,
-        field_prompt=columns.field_instruction,
-        reward_functions=reward_functions,
-        rollout_function=rollout_function,
         status=TaskStatus.PENDING,
         is_organic=False,
         created_at=current_time,
@@ -455,7 +449,7 @@ async def create_synthetic_env_task(
         account_id=vcst.NULL_ACCOUNT_ID,
         yarn_factor=yarn_factor,
     )
-    logger.info(f"New GRPO task created with dataset {dataset.dataset_id}, yarn_factor={yarn_factor}")
+    logger.info(f"New Environment task created with dataset {dataset.dataset_id}, yarn_factor={yarn_factor}")
 
     task = await add_task(task, config.psql_db)
 

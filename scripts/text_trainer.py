@@ -112,13 +112,9 @@ def create_config(task_id, model, dataset, dataset_type, file_format, output_dir
         config["trl"]["reward_funcs"] = [f"{filename}.{func_name}" for func_name in reward_funcs_names]
         config["trl"]["reward_weights"] = [reward_function.reward_weight for reward_function in dataset_type.reward_functions]
     elif isinstance(dataset_type, EnvironmentDatasetType):
-        if dataset_type.rollout_function:
-            filename, rollout_func_name = create_rollout_func_file(
-                dataset_type.rollout_function.rollout_func,
-                task_id,
-                train_cst.AXOLOTL_DIRECTORIES["root"]
-            )
-            config["trl"]["rollout_func"] = f"{filename}.{rollout_func_name}"
+        # Switch based on the environment
+        if dataset_type.environment_name == "alfworld":
+            config["trl"]["rollout_func"] = f"{filename}.{rollout_func_name}" # TODO change to hardcoded example rollout func
 
     if file_format != FileFormat.HF.value:
         for ds in config["datasets"]:

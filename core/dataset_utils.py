@@ -112,7 +112,7 @@ def adapt_columns_for_environment_dataset(dataset_path: str, dataset_type: Envir
     with open(dataset_path, 'r') as f:
         data = json.load(f)
     df = pd.DataFrame(data)
-    df = df.rename(columns={dataset_type.field_prompt: cst.GRPO_DEFAULT_FIELD_PROMPT})
+    df = df.rename(columns={"prompt": cst.GRPO_DEFAULT_FIELD_PROMPT})
     # Remove records where the prompt field is empty or None
     df = df[df[cst.GRPO_DEFAULT_FIELD_PROMPT].notna() & (df[cst.GRPO_DEFAULT_FIELD_PROMPT] != "")]
     output_data = df.to_dict(orient='records')

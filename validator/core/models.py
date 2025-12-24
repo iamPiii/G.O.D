@@ -167,20 +167,11 @@ class EnvRawTask(RawTask):
     Environment task data as stored in the database. It expand the RawTask with fields from the EnvTask table.
     """
 
-    field_prompt: str
-    reward_functions: list[RewardFunction]
-    rollout_function: RolloutFunction
+    environment_name: str | None = None
     file_format: FileFormat = FileFormat.HF
     task_type: TaskType = TaskType.ENVIRONMENTTASK
-    extra_column: str | None = None
     synthetic_data: str | None = None
 
-    @model_validator(mode="after")
-    def validate_reward_functions(self) -> "EnvRawTask":
-        for reward_function in self.reward_functions:
-            if reward_function.func_hash is None:
-                reward_function.func_hash = hashlib.sha256(reward_function.reward_func.encode()).hexdigest()
-        return self
 
 
 class InstructTextRawTask(RawTask):

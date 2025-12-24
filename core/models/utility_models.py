@@ -97,24 +97,6 @@ class RewardFunction(BaseModel):
     is_manual: bool | None = None
 
 
-class RolloutFunction(BaseModel):
-    """Model representing a rollout function with its metadata"""
-
-    rollout_id: str | None = Field(None, description="UUID of the rollout function in the database")
-    rollout_func: str = Field(
-        ...,
-        description="String with the python code of the rollout function to use",
-        examples=[
-            "def rollout_func(prompts, trainer, max_rounds=3):",
-            '"""Rollout function."""',
-            "    return 0",
-        ],
-    )
-    func_hash: str | None = None
-    is_generic: bool | None = None
-    is_manual: bool | None = None
-
-
 class GrpoDatasetType(BaseModel):
     field_prompt: str | None = None
     reward_functions: list[RewardFunction] | None = []
@@ -122,10 +104,7 @@ class GrpoDatasetType(BaseModel):
 
 
 class EnvironmentDatasetType(BaseModel):
-    field_prompt: str | None = None
-    reward_functions: list[RewardFunction] | None = []
-    rollout_function: RolloutFunction | None = None
-    extra_column: str | None = None
+    environment_name: str | None = None
 
 
 class DpoDatasetType(BaseModel):

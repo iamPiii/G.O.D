@@ -590,7 +590,7 @@ async def start_training_task(task: TrainerProxyRequest, local_repo_path: str):
         env_server_url_str = None
         if task_type == TaskType.ENVIRONMENTTASK: # TODO: Later also change server based on environment, currently alf only
             logger.info("Running Environment Server Containers", extra=log_labels)
-            await log_task(training_data.task_id, task.hotkey, "Starting GRPO Environment Servers...")
+            await log_task(training_data.task_id, task.hotkey, "Starting Environment Servers...")
 
             for gpu in task.gpu_ids:
                 environment_server_container = await run_environment_server_container(log_labels)
