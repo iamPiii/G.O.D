@@ -77,6 +77,14 @@ def calculate_miner_ranking_and_scores(
         else:
             logger.info(f"Processing {valid_results[0].task_type} - using test_loss for ranking")
 
+    is_env_task = False
+    if valid_results and isinstance(valid_results[0], MinerResultsText):
+        is_env_task = valid_results[0].task_type == TaskType.ENVIRONMENTTASK
+        if is_env_task:
+            logger.info("Processing Env task - higher score is better")
+        else:
+            logger.info(f"Processing {valid_results[0].task_type} - using test_loss for ranking")
+
     logger.info("Using test loss for ranking")
     ranked_results = []
     for result in valid_results:
@@ -88,6 +96,10 @@ def calculate_miner_ranking_and_scores(
         # For GRPO, sort in reverse order (higher value is better)
         ranked_results.sort(key=lambda x: float("-inf") if math.isnan(x[1]) else -x[1])
         ranking_type = "GRPO score (bigger is better)"
+    elif is_env_task:
+        # For Env taks, sort in reverse order (higher value is better)
+        ranked_results.sort(key=lambda x: float("-inf") if math.isnan(x[1]) else -x[1])
+        ranking_type = "Environment score (bigger is better)"
     else:
         # For other tasks, sort normally (lower loss is better)
         ranked_results.sort(key=lambda x: float("inf") if math.isnan(x[1]) else x[1])
