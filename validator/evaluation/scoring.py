@@ -278,7 +278,8 @@ async def _evaluate_submissions(
         if not repos_to_evaluate:
             return results
 
-        assert task.test_data is not None, "Test data shouldn't be none for text tasks"
+        if task.task_type != TaskType.ENVIRONMENTTASK:
+            assert task.test_data is not None, "Test data shouldn't be none for text tasks"
 
         evaluation_params = {
             "file_format": FileFormat.JSON,
@@ -289,8 +290,11 @@ async def _evaluate_submissions(
         }
 
         logger.info("Starting test evaluation")
-        test_data_filepath = await download_s3_file(task.test_data)
-        test_results = await run_evaluation_docker_text(dataset=test_data_filepath, **evaluation_params)
+        if task.task_type != TaskType.ENVIRONMENTTASK:
+            test_data_filepath = await download_s3_file(task.test_data)
+            test_results = await run_evaluation_docker_text(dataset=test_data_filepath, **evaluation_params)
+        else:
+            test_results = await run_evaluation_docker_text(dataset="proxy", **evaluation_params)
 
         try:
             os.remove(test_data_filepath)
