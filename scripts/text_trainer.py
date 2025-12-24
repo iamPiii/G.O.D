@@ -220,7 +220,7 @@ async def main():
             prompt_field="prompt",
         )
         adapt_columns_for_environment_dataset(dataset_path, dataset_type)
-
+    
     dataset_path = copy_dataset_to_axolotl_directories(dataset_path)
 
     output_dir = train_paths.get_checkpoints_output_path(args.task_id, args.expected_repo_name)
