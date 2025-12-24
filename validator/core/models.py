@@ -23,7 +23,6 @@ from core.models.utility_models import ImageTextPair
 from core.models.utility_models import InstructTextDatasetType
 from core.models.utility_models import EnvironmentDatasetType
 from core.models.utility_models import RewardFunction
-from core.models.utility_models import RolloutFunction
 from core.models.utility_models import TaskType
 
 

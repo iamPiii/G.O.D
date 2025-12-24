@@ -28,7 +28,6 @@ from validator.core.models import EnvRawTask
 from validator.core.models import InstructTextRawTask
 from validator.core.models import RawTask
 from validator.core.models import RewardFunction
-from validator.core.models import RolloutFunction
 from validator.db.sql import grpo as grpo_sql
 from validator.db.sql.grpo import get_generic_reward_functions_from_db
 from validator.db.sql.tasks import add_task
