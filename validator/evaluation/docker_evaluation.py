@@ -441,6 +441,10 @@ async def run_evaluation_docker_environment(
 
     logger.info(f"Starting sequential environment evaluation for {len(models)} repos: {models}")
 
+    environment_server_image = ""
+    if dataset_type.environment_name == "alfworld":
+        environment_server_image = "affinefoundation/agentgym:alfworld"
+
     evaluation_results = {}
     for repo in models:
 
@@ -475,7 +479,7 @@ async def run_evaluation_docker_environment(
             logger.info("Starting AgentGym Server...")
             environment_container: Container = await asyncio.to_thread(
                 client.containers.run,
-                "affinefoundation/agentgym:alfworld",
+                environment_server_image,
                 detach=True,
                 network="agent_eval_net",
                 ports={'8000/tcp': 8001} 
