@@ -26,7 +26,6 @@ from core.models.utility_models import InstructTextDatasetType
 from core.utils import download_s3_file
 from validator.core import constants as vcst
 from validator.tasks.task_prep import unzip_to_temp_path
-from validator.evaluation.utils import get_lora_base_model
 from validator.utils.logging import get_all_context_tags
 from validator.utils.logging import get_logger
 from validator.utils.logging import stream_container_logs
