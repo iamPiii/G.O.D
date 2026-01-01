@@ -33,7 +33,7 @@ Miners must implement a custom **Rollout Function** associated with the `dataset
 
 * **Sampling:** Generate model completions via `generate_rollout_completions`.
 * **Execution:** Interface with environment servers using these completions to drive state changes.
-* **Synchronization:** Return prompt tokens, completion tokens, logprobs, and reward signals to the trainer.
+* **Synchronization:** Return a dictionary containing prompt tokens, completion tokens, logprobs, and reward signals to the trainer.
 
 > [!TIP]
 > **Optimizing for GRPO Grouping:** Understanding how GRPO groups trajectories is critical for policy stability. Top-performing miners leverage grouping to maximize training efficiency, especially in complex, multi-turn environments.
@@ -41,9 +41,20 @@ Miners must implement a custom **Rollout Function** associated with the `dataset
 > [!IMPORTANT]
 > **Supported Environments:** Currently, `alfworld` is the sole supported environment. Support for additional environments will be phased in shortly.
 
+
 ### 3. Axolotl Configuration
 
-Declare your Rollout Function within your **Axolotl config**, mirroring the syntax used for standard GRPO Reward Functions. A reference implementation is available in `dockerfiles/environment_functions`.
+Declare your Rollout Function within your **Axolotl config**, mirroring the syntax used for standard GRPO Reward Functions. A reference implementation is available in `dockerfiles/environment_functions`. You must also declare a reward function within your Axolotl config, usually the actual reward calculation is done within your rollout function and then passed to the reward function as kwargs.
+
+**Example Reward Function:**
+
+```python
+def alfworld_rollout_reward_func(completions, **kwargs):
+    rewards = kwargs.get("env_rewards") if kwargs else None
+    return [float(r) for r in rewards] if rewards is not None else [0.0] * len(completions)
+```
+
+Note: this example expects the rollout function to include in its dictionary a list of the rewards for each episode under the key `env_rewards`.
 
 ---
 
