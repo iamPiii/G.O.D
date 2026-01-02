@@ -572,9 +572,10 @@ async def run_evaluation_docker_environment(
             avg_score = total_score / len(all_results) if all_results else 0
             avg_time = total_time / len(all_results) if all_results else 0
 
-            evaluation_results[repo] = {'final_raw_rewards': {
-                'average_score_on_environment': avg_score
-            }}
+            evaluation_results[repo] = {
+                'is_finetune': True,
+                'eval_loss': avg_score
+            }
 
         except Exception as e:
             logger.error(f"Failed to evaluate repo {repo}: {str(e)}", exc_info=True)
@@ -595,7 +596,7 @@ async def run_evaluation_docker_environment(
             client.close()
 
     evaluation_results = normalize_rewards_and_compute_loss(evaluation_results)
-    logger.info(f"Grpo evaluation results post normalization: {evaluation_results}")
+    logger.info(f"Environment evaluation results post normalization: {evaluation_results}")
     return process_evaluation_results(evaluation_results, is_image=False)
 
 
