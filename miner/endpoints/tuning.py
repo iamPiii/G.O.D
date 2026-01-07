@@ -24,7 +24,7 @@ def factory_router() -> APIRouter:
         response_model=TrainingRepoResponse,
         summary="Get Training Repo",
         description="Retrieve the training repository and commit hash for the tournament.",
-        # dependencies=[Depends(blacklist_low_stake), Depends(verify_get_request)],
+        dependencies=[Depends(blacklist_low_stake), Depends(verify_get_request)],
     )
 
     return router
