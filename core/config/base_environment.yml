@@ -73,6 +73,7 @@ wandb_runid: default
 
 eval_table_size:
 max_steps: 1000
+save_steps: 20
 debug:
 deepspeed:
 weight_decay: 0.0
