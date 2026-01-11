@@ -36,6 +36,7 @@ core/dataset/images/*
 !core/dataset/images/.gitkeep
 secure_checkpoints/
 outputs/
+.env.trainer-logs
 
 *_keys.encrypted
 container_logs.txt
