@@ -40,6 +40,7 @@ from validator.utils.minio import async_minio_client
 
 logger = get_logger(__name__)
 
+
 def calculate_miner_ranking_and_scores(
     miner_results: list[MinerResultsText | MinerResultsImage],
 ) -> list[MinerResultsText | MinerResultsImage]:
@@ -198,9 +199,7 @@ def _get_dataset_type(task: AnyTypeRawTask) -> TextDatasetType | None:
             extra_column=task.extra_column,
         )
     elif task.task_type == TaskType.ENVIRONMENTTASK:
-        return EnvironmentDatasetType(
-            environment_name=task.environment_name
-        )
+        return EnvironmentDatasetType(environment_name=task.environment_name)
     elif task.task_type == TaskType.CHATTASK:
         return ChatTemplateDatasetType(
             chat_template=task.chat_template,
@@ -265,7 +264,13 @@ async def _evaluate_submissions(
     if len(unique_repos) != len(submission_repos):
         logger.warning(f"Found duplicate repos. Deduplicating {len(submission_repos)} repos to {len(unique_repos)} unique repos")
 
-    if task.task_type in [TaskType.INSTRUCTTEXTTASK, TaskType.DPOTASK, TaskType.GRPOTASK, TaskType.CHATTASK, TaskType.ENVIRONMENTTASK]:
+    if task.task_type in [
+        TaskType.INSTRUCTTEXTTASK,
+        TaskType.DPOTASK,
+        TaskType.GRPOTASK,
+        TaskType.CHATTASK,
+        TaskType.ENVIRONMENTTASK,
+    ]:
         results: dict[str, EvaluationResultText | Exception] = {}
         repos_to_evaluate = []
         for repo in unique_repos:
@@ -551,7 +556,13 @@ async def process_miners_pool(
                             )
                         )
                         continue
-                    elif task.task_type in [TaskType.INSTRUCTTEXTTASK, TaskType.DPOTASK, TaskType.GRPOTASK, TaskType.CHATTASK, TaskType.ENVIRONMENTTASK]:
+                    elif task.task_type in [
+                        TaskType.INSTRUCTTEXTTASK,
+                        TaskType.DPOTASK,
+                        TaskType.GRPOTASK,
+                        TaskType.CHATTASK,
+                        TaskType.ENVIRONMENTTASK,
+                    ]:
                         test_result = eval_result
                     elif task.task_type == TaskType.IMAGETASK:
                         test_result = eval_result
@@ -567,7 +578,13 @@ async def process_miners_pool(
                         updated_on=datetime.now(),
                     )
 
-                if task.task_type in [TaskType.INSTRUCTTEXTTASK, TaskType.DPOTASK, TaskType.GRPOTASK, TaskType.CHATTASK, TaskType.ENVIRONMENTTASK]:
+                if task.task_type in [
+                    TaskType.INSTRUCTTEXTTASK,
+                    TaskType.DPOTASK,
+                    TaskType.GRPOTASK,
+                    TaskType.CHATTASK,
+                    TaskType.ENVIRONMENTTASK,
+                ]:
                     results.append(
                         MinerResultsText(
                             hotkey=miner.hotkey,
@@ -656,7 +673,7 @@ async def evaluate_and_score(task: AnyTypeRawTask, gpu_ids: list[int], config: C
             TaskType.GRPOTASK,
             TaskType.CHATTASK,
             TaskType.IMAGETASK,
-            TaskType.ENVIRONMENTTASK
+            TaskType.ENVIRONMENTTASK,
         ]:
             files_to_delete = [task.training_data, task.test_data]
         else:

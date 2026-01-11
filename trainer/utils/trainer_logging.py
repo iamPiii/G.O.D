@@ -10,6 +10,7 @@ from trainer.constants import VECTOR_URL
 
 HOSTNAME = socket.gethostname()
 
+
 class VectorHandler(logging.Handler):
     def __init__(self, url):
         super().__init__()
@@ -28,7 +29,7 @@ class VectorHandler(logging.Handler):
             for key, value in record.__dict__.items():
                 if key not in log_entry and not key.startswith("_"):
                     try:
-                        json.dumps(value) 
+                        json.dumps(value)
                         log_entry[key] = value
                     except Exception:
                         log_entry[key] = str(value)
@@ -36,10 +37,12 @@ class VectorHandler(logging.Handler):
         except Exception:
             self.handleError(record)
 
+
 def setup_logger():
     logger = logging.getLogger("trainer")
     logger.setLevel(logging.INFO)
     logger.addHandler(VectorHandler(VECTOR_URL))
     return logger
+
 
 logger = setup_logger()

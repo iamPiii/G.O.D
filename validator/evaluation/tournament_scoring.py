@@ -1,4 +1,3 @@
-
 import validator.core.constants as cts
 from core.models.tournament_models import TournamentResultsWithWinners
 from core.models.tournament_models import TournamentScore
