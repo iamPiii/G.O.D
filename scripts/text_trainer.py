@@ -76,8 +76,8 @@ def create_config(task_id, model, dataset, dataset_type, file_format, output_dir
     """Create the axolotl config file with appropriate settings."""
 
     print(f"Dataset type: {dataset_type}", flush=True)
-    
     config_path = train_paths.get_axolotl_base_config_path(dataset_type)
+    print(f"Config path: {config_path}", flush=True)
 
     with open(config_path, "r") as file:
         config = yaml.safe_load(file)
