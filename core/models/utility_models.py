@@ -103,7 +103,7 @@ class GrpoDatasetType(BaseModel):
     extra_column: str | None = None
 
 
-class EnvironmentDatasetType(BaseModel):
+class EnvironmentDatasetType(InstructTextDatasetType):
     environment_name: str | None = None
 
 
