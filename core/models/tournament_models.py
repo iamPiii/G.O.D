@@ -309,14 +309,20 @@ class NextTournamentInfo(BaseModel):
     tournament_type: TournamentType
     next_start_date: datetime | None = None
     next_end_date: datetime | None = None
-    interval_hours: int | None = None
     current_round_number: int | None = None
     tournament_status: str | None = None
+    # Legacy fields for frontend compatibility
+    interval_hours: int | None = None
+    # New scheduling fields
+    scheduled_day_of_week: int | None = None  # 0=Monday, 6=Sunday
+    scheduled_hour: int | None = None  # 0-23 UTC
+    scheduled_minute: int | None = None  # Always 0
 
 
 class NextTournamentDates(BaseModel):
     text: NextTournamentInfo
     image: NextTournamentInfo
+    environment: NextTournamentInfo
 
 
 class ActiveTournamentParticipant(BaseModel):
@@ -334,6 +340,7 @@ class ActiveTournamentInfo(BaseModel):
 class ActiveTournamentsResponse(BaseModel):
     text: ActiveTournamentInfo | None
     image: ActiveTournamentInfo | None
+    environment: ActiveTournamentInfo | None
 
 
 class TournamentBurnData(BaseModel):
@@ -452,6 +459,7 @@ class NodeWeightsResult(BaseModel):
         """Convert to tuple format for compatibility with existing code"""
         return self.node_ids, self.node_weights
 
+
 class MinerEmissionWeight(BaseModel):
     hotkey: str
     rank: int
@@ -489,7 +497,7 @@ class MultiWeightProjectionResponse(BaseModel):
 
 class BossBattleResponse(BaseModel):
     """Response for boss battle performance differences"""
-    
+
     text_tournament_id: str | None
     text_performance_differences: list[TaskPerformanceDifference]
     image_tournament_id: str | None

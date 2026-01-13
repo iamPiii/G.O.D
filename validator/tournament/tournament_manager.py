@@ -2,6 +2,7 @@ import asyncio
 import math
 import random
 from datetime import datetime
+from datetime import timedelta
 from datetime import timezone
 
 from fiber.chain.models import Node
@@ -153,7 +154,7 @@ async def _create_first_round(
         round_structure = organise_tournament_round(nodes, config, tournament_type)
 
         round_type = RoundType.KNOCKOUT if isinstance(round_structure, KnockoutRound) else RoundType.GROUP
-        
+
         # Environment tournaments only have group stage, so mark it as final
         is_final_round = tournament_type == TournamentType.ENVIRONMENT
 
@@ -210,11 +211,9 @@ async def assign_nodes_to_tournament_tasks(
             if EMISSION_BURN_HOTKEY not in all_participants:
                 all_participants.append(EMISSION_BURN_HOTKEY)
                 logger.info(f"Adding boss contestant {EMISSION_BURN_HOTKEY} to environment tournament task")
-            group_id = f"{round_id}_group_001"
         else:
             all_participants = None
-            group_id = None
-        
+
         for i, group in enumerate(round_structure.groups):
             if is_environment_tournament:
                 current_group_id = f"{round_id}_group_001"
@@ -245,7 +244,7 @@ async def assign_nodes_to_tournament_tasks(
                         logger.info(
                             f"Assigned {hotkey} to group task {task.task_id} with expected_repo_name: {expected_repo_name}"
                         )
-            
+
             if is_environment_tournament:
                 logger.info(f"Finished assigning {len(all_participants)} participants to environment tournament task(s)")
                 break
@@ -302,7 +301,7 @@ async def create_next_round(
     if tournament.tournament_type == TournamentType.ENVIRONMENT:
         logger.info(f"Environment tournament {tournament.tournament_id} only has group stage, no next round to create")
         return
-    
+
     next_round_number = completed_round.round_number + 1
     next_round_id = generate_round_id(tournament.tournament_id, next_round_number)
 
@@ -443,7 +442,7 @@ async def advance_tournament(tournament: TournamentData, completed_round: Tourna
             )
 
             if tournament.tournament_type == TournamentType.ENVIRONMENT:
-                logger.info(f"Environment tournament: uploading winner repository only")
+                logger.info("Environment tournament: uploading winner repository only")
                 if winner != cst.EMISSION_BURN_HOTKEY:
                     try:
                         logger.info(f"Creating benchmark tasks for tournament winner {winner}")
@@ -1055,7 +1054,7 @@ async def check_if_round_is_completed(round_data: TournamentRoundData, config: C
 async def process_tournament_scheduling(config: Config):
     """
     Process tournament scheduling to automatically start new tournaments when the previous ones finish.
-    Checks both text and image tournaments independently.
+    Checks text, image, and environment tournaments independently.
     """
     logger.info("Processing tournament scheduling...")
 
@@ -1098,15 +1097,15 @@ async def check_and_start_tournament(tournament_type: TournamentType, psql_db: P
             completed_at = await get_tournament_completion_time(latest_tournament.tournament_id, psql_db)
             if await should_start_new_tournament_after_interval(completed_at or created_at):
                 logger.info(
-                    f"Starting new {tournament_type.value} tournament after {cst.TOURNAMENT_INTERVAL_HOURS} hours "
-                    f"since {latest_tournament.tournament_id} completed"
+                    f"Starting new {tournament_type.value} tournament at scheduled time "
+                    f"(previous tournament {latest_tournament.tournament_id} completed)"
                 )
 
                 # Create new tournament of the same type
                 new_tournament_id = await create_basic_tournament(tournament_type, psql_db, config)
                 logger.info(f"Created new {tournament_type.value} tournament: {new_tournament_id}")
             else:
-                logger.info(f"Not enough time has passed since last {tournament_type.value} tournament completion")
+                logger.info(f"Waiting for next scheduled start time for {tournament_type.value} tournament")
         elif not latest_tournament:
             # No tournaments of this type exist, create the first one
             logger.info(f"No {tournament_type.value} tournaments found, creating first one")
@@ -1128,7 +1127,8 @@ async def get_tournament_completion_time(tournament_id: str, psql_db: PSQLDB) ->
 
 async def should_start_new_tournament_after_interval(last_created_at) -> bool:
     """
-    Check if enough time has passed since the last tournament was created based on TOURNAMENT_INTERVAL_HOURS.
+    Check if we've reached the next scheduled tournament start time.
+    Tournaments start every week on TOURNAMENT_SCHEDULE_DAY_OF_WEEK at TOURNAMENT_SCHEDULE_HOUR (UTC).
     """
     if not last_created_at:
         return True
@@ -1138,12 +1138,57 @@ async def should_start_new_tournament_after_interval(last_created_at) -> bool:
     if last_created_at.tzinfo is None:
         last_created_at = last_created_at.replace(tzinfo=timezone.utc)
 
-    time_diff = now - last_created_at
-    hours_passed = time_diff.total_seconds() / 3600
+    # Calculate the next scheduled start time
+    next_start_time = _calculate_next_tournament_start_time(last_created_at)
 
-    logger.info(f"Hours since last tournament completion: {hours_passed:.2f}, required: {cst.TOURNAMENT_INTERVAL_HOURS}")
+    if now >= next_start_time:
+        days_since_last = (now - last_created_at).days
+        logger.info(
+            f"Days since last tournament: {days_since_last}, "
+            f"next scheduled start: {next_start_time.strftime('%Y-%m-%d %H:%M UTC')} - ready to start"
+        )
+        return True
+    else:
+        time_until_start = (next_start_time - now).total_seconds() / 3600
+        logger.info(
+            f"Next scheduled start: {next_start_time.strftime('%Y-%m-%d %H:%M UTC')} "
+            f"(in {time_until_start:.2f} hours) - waiting for scheduled time"
+        )
+        return False
 
-    return hours_passed >= cst.TOURNAMENT_INTERVAL_HOURS
+
+def _calculate_next_tournament_start_time(last_created_at: datetime) -> datetime:
+    """
+    Calculate the next valid tournament start time based on configured day of week and hour.
+
+    Returns the next occurrence of TOURNAMENT_SCHEDULE_DAY_OF_WEEK at TOURNAMENT_SCHEDULE_HOUR
+    that is after last_created_at.
+    """
+    # Get current time for reference
+    now = datetime.now(timezone.utc)
+
+    # Use the later of last_created_at or now as our reference point
+    reference_time = max(last_created_at, now)
+
+    target_weekday = cst.TOURNAMENT_SCHEDULE_DAY_OF_WEEK
+    target_hour = cst.TOURNAMENT_SCHEDULE_HOUR
+
+    # Find the next occurrence of the target day
+    current_weekday = reference_time.weekday()
+    days_until_target = (target_weekday - current_weekday) % 7
+
+    # If days_until_target is 0, we're on the target day - check if time has passed
+    if days_until_target == 0:
+        candidate = reference_time.replace(hour=target_hour, minute=0, second=0, microsecond=0)
+        if candidate > reference_time:
+            return candidate
+        # Time has passed today, schedule for next week
+        days_until_target = 7
+
+    next_target_day = reference_time + timedelta(days=days_until_target)
+    next_start = next_target_day.replace(hour=target_hour, minute=0, second=0, microsecond=0)
+
+    return next_start
 
 
 async def get_final_round_participants(completed_round: TournamentRoundData, psql_db: PSQLDB) -> tuple[str, str]:
