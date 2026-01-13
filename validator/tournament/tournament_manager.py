@@ -1095,7 +1095,7 @@ async def check_and_start_tournament(tournament_type: TournamentType, psql_db: P
             # For completed tournaments, we should check time since completion, not creation
             # Get the updated_at time which will be the completion time
             completed_at = await get_tournament_completion_time(latest_tournament.tournament_id, psql_db)
-            if await should_start_new_tournament_after_interval(completed_at or created_at):
+            if await should_start_new_tournament_after_interval(completed_at or created_at, tournament_type):
                 logger.info(
                     f"Starting new {tournament_type.value} tournament at scheduled time "
                     f"(previous tournament {latest_tournament.tournament_id} completed)"
@@ -1125,10 +1125,10 @@ async def get_tournament_completion_time(tournament_id: str, psql_db: PSQLDB) ->
         return result
 
 
-async def should_start_new_tournament_after_interval(last_created_at) -> bool:
+async def should_start_new_tournament_after_interval(last_created_at, tournament_type: TournamentType) -> bool:
     """
-    Check if we've reached the next scheduled tournament start time.
-    Tournaments start every week on TOURNAMENT_SCHEDULE_DAY_OF_WEEK at TOURNAMENT_SCHEDULE_HOUR (UTC).
+    Check if we've reached the next scheduled tournament start time for the given tournament type.
+    Each tournament type has its own scheduled day and hour (UTC).
     """
     if not last_created_at:
         return True
@@ -1138,31 +1138,47 @@ async def should_start_new_tournament_after_interval(last_created_at) -> bool:
     if last_created_at.tzinfo is None:
         last_created_at = last_created_at.replace(tzinfo=timezone.utc)
 
-    # Calculate the next scheduled start time
-    next_start_time = _calculate_next_tournament_start_time(last_created_at)
+    # Calculate the next scheduled start time for this tournament type
+    next_start_time = _calculate_next_tournament_start_time(last_created_at, tournament_type)
 
     if now >= next_start_time:
         days_since_last = (now - last_created_at).days
         logger.info(
-            f"Days since last tournament: {days_since_last}, "
+            f"{tournament_type.value} tournament - Days since last: {days_since_last}, "
             f"next scheduled start: {next_start_time.strftime('%Y-%m-%d %H:%M UTC')} - ready to start"
         )
         return True
     else:
         time_until_start = (next_start_time - now).total_seconds() / 3600
         logger.info(
-            f"Next scheduled start: {next_start_time.strftime('%Y-%m-%d %H:%M UTC')} "
+            f"{tournament_type.value} tournament - Next scheduled start: {next_start_time.strftime('%Y-%m-%d %H:%M UTC')} "
             f"(in {time_until_start:.2f} hours) - waiting for scheduled time"
         )
         return False
 
 
-def _calculate_next_tournament_start_time(last_created_at: datetime) -> datetime:
+def _get_tournament_schedule(tournament_type: TournamentType) -> tuple[int, int]:
     """
-    Calculate the next valid tournament start time based on configured day of week and hour.
+    Get the scheduled day of week and hour for a specific tournament type.
 
-    Returns the next occurrence of TOURNAMENT_SCHEDULE_DAY_OF_WEEK at TOURNAMENT_SCHEDULE_HOUR
-    that is after last_created_at.
+    Returns (day_of_week, hour) where day_of_week is 0=Monday through 6=Sunday.
+    """
+    if tournament_type == TournamentType.ENVIRONMENT:
+        return (cst.TOURNAMENT_SCHEDULE_ENVIRONMENT_DAY_OF_WEEK, cst.TOURNAMENT_SCHEDULE_ENVIRONMENT_HOUR)
+    elif tournament_type == TournamentType.TEXT:
+        return (cst.TOURNAMENT_SCHEDULE_TEXT_DAY_OF_WEEK, cst.TOURNAMENT_SCHEDULE_TEXT_HOUR)
+    elif tournament_type == TournamentType.IMAGE:
+        return (cst.TOURNAMENT_SCHEDULE_IMAGE_DAY_OF_WEEK, cst.TOURNAMENT_SCHEDULE_IMAGE_HOUR)
+    else:
+        # Default fallback
+        return (0, 14)
+
+
+def _calculate_next_tournament_start_time(last_created_at: datetime, tournament_type: TournamentType) -> datetime:
+    """
+    Calculate the next valid tournament start time based on configured day of week and hour for the tournament type.
+
+    Returns the next occurrence of the scheduled day/hour that is after last_created_at.
     """
     # Get current time for reference
     now = datetime.now(timezone.utc)
@@ -1170,8 +1186,7 @@ def _calculate_next_tournament_start_time(last_created_at: datetime) -> datetime
     # Use the later of last_created_at or now as our reference point
     reference_time = max(last_created_at, now)
 
-    target_weekday = cst.TOURNAMENT_SCHEDULE_DAY_OF_WEEK
-    target_hour = cst.TOURNAMENT_SCHEDULE_HOUR
+    target_weekday, target_hour = _get_tournament_schedule(tournament_type)
 
     # Find the next occurrence of the target day
     current_weekday = reference_time.weekday()

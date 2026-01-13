@@ -44,6 +44,7 @@ from validator.evaluation.tournament_scoring import calculate_tournament_type_sc
 from validator.tournament.performance_calculator import calculate_boss_round_performance_differences
 from validator.tournament.performance_calculator import get_tournament_performance_data
 from validator.tournament.tournament_manager import _calculate_next_tournament_start_time
+from validator.tournament.tournament_manager import _get_tournament_schedule
 from validator.tournament.tournament_manager import get_tournament_completion_time
 from validator.tournament.utils import get_tournament_gpu_requirement
 from validator.utils.logging import get_logger
@@ -304,13 +305,16 @@ async def get_next_tournament_dates(
                 rounds = await tournament_sql.get_tournament_rounds(active_tournament.tournament_id, config.psql_db)
                 current_round = len(rounds) if rounds else 1
 
+                # Get tournament-specific schedule
+                scheduled_day, scheduled_hour = _get_tournament_schedule(tournament_type)
+
                 return NextTournamentInfo(
                     tournament_type=tournament_type,
                     current_round_number=current_round,
                     tournament_status="active",
                     interval_hours=cts.TOURNAMENT_INTERVAL_HOURS,
-                    scheduled_day_of_week=cts.TOURNAMENT_SCHEDULE_DAY_OF_WEEK,
-                    scheduled_hour=cts.TOURNAMENT_SCHEDULE_HOUR,
+                    scheduled_day_of_week=scheduled_day,
+                    scheduled_hour=scheduled_hour,
                     scheduled_minute=0,
                 )
 
@@ -318,13 +322,16 @@ async def get_next_tournament_dates(
             pending_tournaments = await tournament_sql.get_tournaments_with_status(TournamentStatus.PENDING, config.psql_db)
             pending_of_type = [t for t in pending_tournaments if t.tournament_type == tournament_type]
             if pending_of_type:
+                # Get tournament-specific schedule
+                scheduled_day, scheduled_hour = _get_tournament_schedule(tournament_type)
+
                 return NextTournamentInfo(
                     tournament_type=tournament_type,
                     current_round_number=1,
                     tournament_status="pending",
                     interval_hours=cts.TOURNAMENT_INTERVAL_HOURS,
-                    scheduled_day_of_week=cts.TOURNAMENT_SCHEDULE_DAY_OF_WEEK,
-                    scheduled_hour=cts.TOURNAMENT_SCHEDULE_HOUR,
+                    scheduled_day_of_week=scheduled_day,
+                    scheduled_hour=scheduled_hour,
                     scheduled_minute=0,
                 )
 
@@ -335,7 +342,7 @@ async def get_next_tournament_dates(
 
             if not tournament:
                 # No previous tournament, calculate next scheduled day/hour
-                next_start = _calculate_next_tournament_start_time(current_time)
+                next_start = _calculate_next_tournament_start_time(current_time, tournament_type)
             else:
                 # Check completion time like the scheduler does
                 if tournament.status == TournamentStatus.COMPLETED:
@@ -348,7 +355,10 @@ async def get_next_tournament_dates(
                 if time_reference.tzinfo is None:
                     time_reference = time_reference.replace(tzinfo=timezone.utc)
 
-                next_start = _calculate_next_tournament_start_time(time_reference)
+                next_start = _calculate_next_tournament_start_time(time_reference, tournament_type)
+
+            # Get tournament-specific schedule
+            scheduled_day, scheduled_hour = _get_tournament_schedule(tournament_type)
 
             return NextTournamentInfo(
                 tournament_type=tournament_type,
@@ -356,8 +366,8 @@ async def get_next_tournament_dates(
                 next_end_date=None,
                 tournament_status="waiting",
                 interval_hours=cts.TOURNAMENT_INTERVAL_HOURS,
-                scheduled_day_of_week=cts.TOURNAMENT_SCHEDULE_DAY_OF_WEEK,
-                scheduled_hour=cts.TOURNAMENT_SCHEDULE_HOUR,
+                scheduled_day_of_week=scheduled_day,
+                scheduled_hour=scheduled_hour,
                 scheduled_minute=0,
             )
 
