@@ -81,7 +81,7 @@ async def calculate_boss_round_performance_differences(tournament_id: str, psql_
                     break
             
             if boss_score is None:
-                logger.warning(f"Boss {boss_hotkey} not found in scores for task {task.task_id}")
+                logger.warning(f"Boss {current_champion} not found in scores for task {task.task_id}")
                 continue
 
             boss_won = tournament.winner_hotkey == EMISSION_BURN_HOTKEY
@@ -163,7 +163,7 @@ async def calculate_boss_round_performance_differences(tournament_id: str, psql_
         )
 
         logger.info(
-            f"Task {task.task_id}: Boss={boss_hotkey if task_obj.task_type == TaskType.ENVIRONMENTTASK else 'EMISSION_BURN'} "
+            f"Task {task.task_id}: Boss={current_champion} "
             f"({boss_score:.6f}), Challenger={challenger_hotkey} ({challenger_score:.6f}), "
             f"Diff={perf_diff * 100:.2f}%, Threshold={threshold * 100:.1f}%, Challenger won: {challenger_won}"
         )

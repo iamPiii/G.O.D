@@ -154,7 +154,7 @@ async def get_tournament_details(
             if final_round:
                 try:
                     boss_round_performance = await calculate_boss_round_performance_differences(
-                        tournament.tournament_id, final_round.round_id, config.psql_db
+                        tournament.tournament_id, config.psql_db
                     )
                 except Exception as e:
                     logger.warning(f"Failed to get boss round performance data: {e}")
@@ -199,9 +199,11 @@ async def get_latest_tournaments_details(
 
         latest_text = await tournament_sql.get_latest_completed_tournament(config.psql_db, TournamentType.TEXT)
         latest_image = await tournament_sql.get_latest_completed_tournament(config.psql_db, TournamentType.IMAGE)
+        latest_environment = await tournament_sql.get_latest_completed_tournament(config.psql_db, TournamentType.ENVIRONMENT)
 
         text_details = None
         image_details = None
+        environment_details = None
 
         if latest_text:
             text_details = await get_tournament_details(latest_text.tournament_id, config)
@@ -209,9 +211,17 @@ async def get_latest_tournaments_details(
         if latest_image:
             image_details = await get_tournament_details(latest_image.tournament_id, config)
 
+        if latest_environment:
+            environment_details = await get_tournament_details(latest_environment.tournament_id, config)
+
         burn_data = await get_tournament_burn_details(config.psql_db)
 
-        result = LatestTournamentsDetailsResponse(text=text_details, image=image_details, burn_data=burn_data)
+        result = LatestTournamentsDetailsResponse(
+            text=text_details, 
+            image=image_details, 
+            environment=environment_details,
+            burn_data=burn_data
+        )
 
         cache_data = result.model_dump()
         await config.redis_db.set(LATEST_TOURNAMENTS_CACHE_KEY, json.dumps(cache_data), ex=LATEST_TOURNAMENTS_CACHE_TTL)
@@ -220,9 +230,11 @@ async def get_latest_tournaments_details(
         logger.info(
             f"Retrieved latest tournament details: text={latest_text.tournament_id if latest_text else None}, "
             f"image={latest_image.tournament_id if latest_image else None}, "
+            f"environment={latest_environment.tournament_id if latest_environment else None}, "
             f"burn_weight={burn_data.burn_weight:.4f}, "
             f"text_weight={burn_data.text_tournament_weight:.4f}, "
-            f"image_weight={burn_data.image_tournament_weight:.4f}"
+            f"image_weight={burn_data.image_tournament_weight:.4f}, "
+            f"environment_weight={burn_data.environment_tournament_weight:.4f}"
         )
         return result
 
@@ -324,9 +336,15 @@ async def get_next_tournament_dates(
             if pending_of_type:
                 # Get tournament-specific schedule
                 scheduled_day, scheduled_hour = _get_tournament_schedule(tournament_type)
+                
+                # Calculate next start date for pending tournament
+                # Use current time as reference since pending tournaments are newly created
+                current_time = datetime.now(timezone.utc)
+                next_start = _calculate_next_tournament_start_time(current_time, tournament_type)
 
                 return NextTournamentInfo(
                     tournament_type=tournament_type,
+                    next_start_date=next_start,
                     current_round_number=1,
                     tournament_status="pending",
                     interval_hours=cts.TOURNAMENT_INTERVAL_HOURS,

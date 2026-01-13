@@ -363,6 +363,7 @@ class LatestTournamentsDetailsResponse(BaseModel):
 
     text: TournamentDetailsResponse | None
     image: TournamentDetailsResponse | None
+    environment: TournamentDetailsResponse | None = None
     burn_data: TournamentBurnData
 
 
@@ -470,6 +471,7 @@ class TournamentWeightsResponse(BaseModel):
     burn_data: TournamentBurnData
     text_top_miners: list[MinerEmissionWeight]
     image_top_miners: list[MinerEmissionWeight]
+    environment_top_miners: list[MinerEmissionWeight] = []
 
 
 class WeightProjection(BaseModel):
@@ -489,6 +491,7 @@ class WeightProjectionResponse(BaseModel):
     percentage_improvement: float
     text_projection: TournamentProjection
     image_projection: TournamentProjection
+    environment_projection: TournamentProjection | None = None
 
 
 class MultiWeightProjectionResponse(BaseModel):
@@ -502,3 +505,5 @@ class BossBattleResponse(BaseModel):
     text_performance_differences: list[TaskPerformanceDifference]
     image_tournament_id: str | None
     image_performance_differences: list[TaskPerformanceDifference]
+    environment_tournament_id: str | None = None
+    environment_performance_differences: list[TaskPerformanceDifference] = []
