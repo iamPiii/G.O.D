@@ -1055,6 +1055,9 @@ async def process_tournament_scheduling(config: Config):
     """
     Process tournament scheduling to automatically start new tournaments when the previous ones finish.
     Checks text, image, and environment tournaments independently.
+
+    Tournaments only start during their scheduled day/hour window. If a scheduled start is missed,
+    the system waits until the next week's scheduled time rather than starting late.
     """
     logger.info("Processing tournament scheduling...")
 
@@ -1127,8 +1130,9 @@ async def get_tournament_completion_time(tournament_id: str, psql_db: PSQLDB) ->
 
 async def should_start_new_tournament_after_interval(last_created_at, tournament_type: TournamentType) -> bool:
     """
-    Check if we've reached the next scheduled tournament start time for the given tournament type.
-    Each tournament type has its own scheduled day and hour (UTC).
+    Check if we're currently in the scheduled tournament start window for the given tournament type.
+    Tournaments only start during their scheduled day and hour. If the window is missed,
+    we wait until the next week's scheduled time.
     """
     if not last_created_at:
         return True
@@ -1138,22 +1142,38 @@ async def should_start_new_tournament_after_interval(last_created_at, tournament
     if last_created_at.tzinfo is None:
         last_created_at = last_created_at.replace(tzinfo=timezone.utc)
 
-    # Calculate the next scheduled start time for this tournament type
+    scheduled_day, scheduled_hour = _get_tournament_schedule(tournament_type)
+
     next_start_time = _calculate_next_tournament_start_time(last_created_at, tournament_type)
 
-    if now >= next_start_time:
+    # Check if we're currently in the scheduled window (same day and hour as the scheduled time)
+    # We allow starting anytime during the scheduled hour
+    is_scheduled_day = now.weekday() == scheduled_day
+    is_scheduled_hour = now.hour == scheduled_hour
+    is_after_next_start = now >= next_start_time
+
+    if is_scheduled_day and is_scheduled_hour and is_after_next_start:
         days_since_last = (now - last_created_at).days
         logger.info(
             f"{tournament_type.value} tournament - Days since last: {days_since_last}, "
-            f"next scheduled start: {next_start_time.strftime('%Y-%m-%d %H:%M UTC')} - ready to start"
+            f"currently in scheduled window ({next_start_time.strftime('%Y-%m-%d %H:%M UTC')}) - ready to start"
         )
         return True
     else:
         time_until_start = (next_start_time - now).total_seconds() / 3600
-        logger.info(
-            f"{tournament_type.value} tournament - Next scheduled start: {next_start_time.strftime('%Y-%m-%d %H:%M UTC')} "
-            f"(in {time_until_start:.2f} hours) - waiting for scheduled time"
-        )
+        if is_after_next_start and not (is_scheduled_day and is_scheduled_hour):
+            next_next_start = _calculate_next_tournament_start_time(now, tournament_type)
+            time_until_start = (next_next_start - now).total_seconds() / 3600
+            logger.info(
+                f"{tournament_type.value} tournament - Missed scheduled window, "
+                f"next opportunity: {next_next_start.strftime('%Y-%m-%d %H:%M UTC')} "
+                f"(in {time_until_start:.2f} hours)"
+            )
+        else:
+            logger.info(
+                f"{tournament_type.value} tournament - Next scheduled start: {next_start_time.strftime('%Y-%m-%d %H:%M UTC')} "
+                f"(in {time_until_start:.2f} hours) - waiting for scheduled time"
+            )
         return False
 
 
