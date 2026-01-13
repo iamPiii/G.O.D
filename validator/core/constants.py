@@ -218,7 +218,15 @@ TOURNAMENT_TEXT_WEIGHT = 0.20
 TOURNAMENT_IMAGE_WEIGHT = 0.15
 MAX_TEXT_TOURNAMENT_WEIGHT = 0.6
 MAX_IMAGE_TOURNAMENT_WEIGHT = 0.4
-TOURNAMENT_INTERVAL_HOURS = 72
+
+# Tournament scheduling settings
+# Tournaments start every week on this day and hour (UTC)
+TOURNAMENT_SCHEDULE_DAY_OF_WEEK = 0  # 0=Monday, 1=Tuesday, 2=Wednesday, 3=Thursday, 4=Friday, 5=Saturday, 6=Sunday
+TOURNAMENT_SCHEDULE_HOUR = 14  # 0-23 (UTC time)
+TOURNAMENT_INTERVAL_HOURS = (
+    120  # Display value for frontend (5 days), not used for actual scheduling. TODO: remove once frontend is updated
+)
+
 BURN_REDUCTION_RATE = 5.0
 MAX_BURN_REDUCTION = 0.8
 EMISSION_MULTIPLIER_THRESHOLD = 0.05
