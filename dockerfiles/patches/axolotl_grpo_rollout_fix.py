@@ -12,15 +12,16 @@ from requests import HTTPError
 from trl.trainer.grpo_trainer import (
     RewardFunc,
     apply_chat_template,
-    disable_gradient_checkpointing,
     gather_object,
     nanmax,
     nanmin,
     nanstd,
     pad,
     prepare_multimodal_messages,
-    use_adapter,
 )
+
+from trl.models.utils import disable_gradient_checkpointing
+from trl.trainer.utils import use_adapter
 
 from axolotl.core.trainers.grpo.args import AxolotlGRPOConfig
 from axolotl.core.trainers.grpo.trainer import (
