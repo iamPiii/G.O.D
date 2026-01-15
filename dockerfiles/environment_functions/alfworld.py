@@ -5,7 +5,8 @@ For Environment Tasks miners are expected to implement their own rollout functio
 You can always expect the environment server url for that task to be available in the env variable 'ENVIRONMENT_SERVER_URL'.
 For most (if not all) tasks the environment server can be expected to have a standardized interface with /reset, /step, and /observe endpoints.
 While this example is for Alfworld the design should work for all standardized environment tasks.
-This is a unoptimized implementation that only trains the model on its first interaction with the environment while using a reward signal from its entire interaction.
+This implementation stores a full episode rollout and returns an action mask so the trainer can
+optimize only on action tokens while still conditioning on observations.
 Read more about rollout functions here: https://huggingface.co/docs/trl/main/en/openenv
 """
 
@@ -59,6 +60,7 @@ def alfworld_rollout_first_prompt_and_completion(prompts: list[str], trainer, ma
     all_episode_completion_ids: list[list[int]] = []
     all_episode_logprobs: list[list[float]] = []
     all_episode_rewards: list[float] = []
+    all_episode_action_masks: list[list[int]] = []
 
     tokenizer = trainer.processing_class
     DATA_LEN = 2500
@@ -84,6 +86,8 @@ def alfworld_rollout_first_prompt_and_completion(prompts: list[str], trainer, ma
         episode_prompt_ids: list[int] = []
         episode_completion_ids: list[int] = []
         episode_logprobs: list[float] = []
+        episode_action_mask: list[int] = []
+        prev_full_ids: list[int] | None = None
         invalid_count = 0
         done = False
         solved = False
@@ -127,8 +131,30 @@ def alfworld_rollout_first_prompt_and_completion(prompts: list[str], trainer, ma
 
             if turn_number == 0:
                 episode_prompt_ids = prompt_ids
-                episode_completion_ids = completion_ids
-                episode_logprobs = logprobs
+                prev_full_ids = prompt_ids.copy()
+            else:
+                if prev_full_ids is None:
+                    prev_full_ids = prompt_ids.copy()
+                elif prompt_ids[: len(prev_full_ids)] != prev_full_ids:
+                    print(
+                        "Warning: prompt_ids are not prefix-preserving. "
+                        "Observation tokens may be misaligned in the rollout."
+                    )
+                    prev_full_ids = prompt_ids.copy()
+                else:
+                    delta_prompt_ids = prompt_ids[len(prev_full_ids) :]
+                    if delta_prompt_ids:
+                        episode_completion_ids.extend(delta_prompt_ids)
+                        episode_logprobs.extend([0.0] * len(delta_prompt_ids))
+                        episode_action_mask.extend([0] * len(delta_prompt_ids))
+                    prev_full_ids = prompt_ids.copy()
+
+            if completion_ids:
+                episode_completion_ids.extend(completion_ids)
+                episode_logprobs.extend(logprobs)
+                episode_action_mask.extend([1] * len(completion_ids))
+                if prev_full_ids is not None:
+                    prev_full_ids = prev_full_ids + completion_ids
 
             messages.append({"role": "assistant", "content": completion_text})
 
@@ -186,12 +212,14 @@ def alfworld_rollout_first_prompt_and_completion(prompts: list[str], trainer, ma
         all_episode_completion_ids.append(episode_completion_ids)
         all_episode_logprobs.append(episode_logprobs)
         all_episode_rewards.append(train_reward)
+        all_episode_action_masks.append(episode_action_mask)
 
     return {
         "prompt_ids": all_episode_prompt_ids,
         "completion_ids": all_episode_completion_ids,
         "logprobs": all_episode_logprobs,
-        "env_rewards": all_episode_rewards
+        "env_rewards": all_episode_rewards,
+        "action_mask": all_episode_action_masks
     }
 
 def alfworld_rollout_reward_func(completions, **kwargs):
