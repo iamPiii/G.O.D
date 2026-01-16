@@ -10,6 +10,12 @@ optimize only on action tokens while still conditioning on observations.
 Read more about rollout functions here: https://huggingface.co/docs/trl/main/en/openenv
 """
 
+# NOTE: Keeping the original TRL helper for rollouts; server mode is configured via GRPOConfig.
+# def _generate_rollout_completions(prompts: list, trainer, *, as_chat: bool | None = None) -> list[dict[str, list]]:
+#     from trl.experimental.openenv import generate_rollout_completions as colocate_generate
+#     return colocate_generate(trainer, prompts=prompts, as_chat=as_chat)
+
+
 def alfworld_rollout_first_prompt_and_completion(prompts: list[str], trainer, max_turns: int = 30) -> dict[str, list]:
     from trl.experimental.openenv import generate_rollout_completions
     import os

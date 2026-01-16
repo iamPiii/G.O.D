@@ -13,7 +13,7 @@ RUN uv pip install packaging setuptools wheel awscli pydantic \
       git+https://github.com/rayonlabs/fiber@2.4.0 \
       git+https://github.com/huggingface/trl
 
-RUN uv pip install --no-build-isolation vllm==0.13.0
+RUN uv pip install --no-build-isolation vllm==0.12.0
 
 WORKDIR /workspace/axolotl
 RUN mkdir -p /workspace/axolotl/configs \

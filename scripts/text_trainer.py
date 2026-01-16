@@ -88,6 +88,15 @@ def create_config(task_id, model, dataset, dataset_type, file_format, output_dir
     config["mlflow_experiment_name"] = dataset
     os.makedirs(output_dir, exist_ok=True)
     config["output_dir"] = str(output_dir)
+    vllm_server_base_url = os.getenv("VLLM_SERVER_BASE_URL")
+    if vllm_server_base_url:
+        config["trl"]["vllm_server_base_url"] = vllm_server_base_url
+    vllm_mode = os.getenv("VLLM_MODE")
+    if vllm_mode:
+        config["trl"]["vllm_mode"] = vllm_mode
+    vllm_tensor_parallel_size = os.getenv("VLLM_TENSOR_PARALLEL_SIZE")
+    if vllm_tensor_parallel_size:
+        config["vllm"]["tensor_parallel_size"] = int(vllm_tensor_parallel_size)
 
     if log_wandb:
         config["wandb_runid"] = f"{task_id}_{expected_repo_name}"
@@ -152,7 +161,14 @@ def run_training(config_path):
     training_env["HF_HUB_DISABLE_SYMLINKS_WARNING"] = "1"
     training_env["HF_HUB_DISABLE_TELEMETRY"] = "1"
 
-    training_command = ["accelerate", "launch", "-m", "axolotl.cli.train", config_path]
+    training_command = ["accelerate", "launch"]
+    num_processes = os.getenv("ACCELERATE_NUM_PROCESSES")
+    if num_processes:
+        training_command += ["--num_processes", str(num_processes)]
+    num_machines = os.getenv("ACCELERATE_NUM_MACHINES")
+    if num_machines:
+        training_command += ["--num_machines", str(num_machines)]
+    training_command += ["-m", "axolotl.cli.train", config_path]
 
     try:
         print("Starting training subprocess...\n", flush=True)
