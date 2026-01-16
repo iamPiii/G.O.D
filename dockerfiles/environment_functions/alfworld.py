@@ -16,7 +16,11 @@ def alfworld_rollout_first_prompt_and_completion(prompts: list[str], trainer, ma
     import random
     import requests
     import json
-    
+
+    # --- Constants for context length management ---
+    MAX_EPISODE_TOKENS = 16384  # Max tokens for completion sequence (truncate if exceeded)
+    MAX_PROMPT_LEN = 24576      # Max prompt tokens before ending episode early
+
     # --- 1. Static Initialization (Once per Rank) ---
     # We check if the function has already established a connection for this worker
     if not getattr(alfworld_rollout_first_prompt_and_completion, "initialized", False):
@@ -129,6 +133,12 @@ def alfworld_rollout_first_prompt_and_completion(prompts: list[str], trainer, ma
             logprobs = rollout_outputs.get("logprobs", [])
             completion_text = tokenizer.decode(completion_ids, skip_special_tokens=True).strip()
 
+            # Check if prompt exceeds max length - end episode early to prevent context overflow
+            if len(prompt_ids) > MAX_PROMPT_LEN:
+                print(f"Warning: Prompt exceeded {MAX_PROMPT_LEN} tokens ({len(prompt_ids)}) at turn {turn_number}, ending episode early")
+                done = True
+                break
+
             if turn_number == 0:
                 episode_prompt_ids = prompt_ids
                 prev_full_ids = prompt_ids.copy()
@@ -136,10 +146,13 @@ def alfworld_rollout_first_prompt_and_completion(prompts: list[str], trainer, ma
                 if prev_full_ids is None:
                     prev_full_ids = prompt_ids.copy()
                 elif prompt_ids[: len(prev_full_ids)] != prev_full_ids:
+                    # BPE mismatch - tokenizer produced different IDs for same prefix text
+                    # Graceful fallback: skip delta masking for this turn, just add completion
                     print(
-                        "Warning: prompt_ids are not prefix-preserving. "
-                        "Observation tokens may be misaligned in the rollout."
+                        f"Warning: BPE mismatch at turn {turn_number} (expected prefix {len(prev_full_ids)}, "
+                        f"got {len(prompt_ids)} tokens). Skipping delta mask for this turn."
                     )
+                    # Reset prev_full_ids to current prompt to try to recover alignment
                     prev_full_ids = prompt_ids.copy()
                 else:
                     delta_prompt_ids = prompt_ids[len(prev_full_ids) :]
@@ -206,7 +219,14 @@ def alfworld_rollout_first_prompt_and_completion(prompts: list[str], trainer, ma
                 messages.append({"role": "user", "content": formatted_observation})
 
             turn_number += 1
-        
+
+        # Truncate episode if completion sequence exceeds max length
+        if len(episode_completion_ids) > MAX_EPISODE_TOKENS:
+            print(f"Warning: Episode completion exceeded {MAX_EPISODE_TOKENS} tokens ({len(episode_completion_ids)}), truncating")
+            episode_completion_ids = episode_completion_ids[:MAX_EPISODE_TOKENS]
+            episode_logprobs = episode_logprobs[:MAX_EPISODE_TOKENS]
+            episode_action_mask = episode_action_mask[:MAX_EPISODE_TOKENS]
+
         train_reward = (1.0 if solved else 0.0) - 0.01 * float(invalid_count)
         all_episode_prompt_ids.append(episode_prompt_ids)
         all_episode_completion_ids.append(episode_completion_ids)

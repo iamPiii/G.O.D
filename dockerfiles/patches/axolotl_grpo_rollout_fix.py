@@ -104,16 +104,37 @@ class ActionMaskedGRPOTrainer(AxolotlGRPOTrainer):
         action_mask = None
         if extra_fields and "action_mask" in extra_fields:
             action_mask_list = extra_fields["action_mask"]
-            if isinstance(action_mask_list, list) and action_mask_list and isinstance(action_mask_list[0], int):
+            # Check if action_mask is a flat list (all elements are integers)
+            # This can happen when batch_size=1 and rollout returns [0, 1, 1, 0] instead of [[0, 1, 1, 0]]
+            is_flat_list = (
+                isinstance(action_mask_list, list)
+                and action_mask_list
+                and all(isinstance(x, (int, float)) for x in action_mask_list)
+            )
+            if is_flat_list:
                 if len(completion_ids_list) != 1:
-                    raise ValueError("action_mask must be a list-of-lists aligned to completions.")
+                    raise ValueError(
+                        f"Flat action_mask received but batch has {len(completion_ids_list)} completions. "
+                        f"action_mask must be a list-of-lists when batch_size > 1."
+                    )
                 action_mask_list = [action_mask_list]
             if not isinstance(action_mask_list, list) or len(action_mask_list) != len(completion_ids_list):
                 raise ValueError("action_mask must be a list-of-lists aligned to completions.")
+
+            # Validate per-sample alignment before padding
+            for idx, (mask, comp_ids) in enumerate(zip(action_mask_list, completion_ids_list)):
+                if len(mask) != len(comp_ids):
+                    raise ValueError(
+                        f"action_mask[{idx}] length ({len(mask)}) does not match "
+                        f"completion_ids[{idx}] length ({len(comp_ids)}). "
+                        f"Rollout function returned misaligned data."
+                    )
+
             action_mask = [torch.tensor(mask, device=device) for mask in action_mask_list]
             action_mask = pad(action_mask, padding_value=0, padding_side="right").to(dtype=completion_mask.dtype)
+            # Shape check after padding kept for safety
             if action_mask.shape != completion_mask.shape:
-                raise ValueError("action_mask shape does not match completion_ids.")
+                raise ValueError("action_mask shape does not match completion_ids after padding.")
 
         loss_mask = completion_mask if action_mask is None else completion_mask * action_mask
 
