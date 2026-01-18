@@ -97,6 +97,9 @@ def create_config(task_id, model, dataset, dataset_type, file_format, output_dir
     vllm_tensor_parallel_size = os.getenv("VLLM_TENSOR_PARALLEL_SIZE")
     if vllm_tensor_parallel_size:
         config["vllm"]["tensor_parallel_size"] = int(vllm_tensor_parallel_size)
+    num_generations = os.getenv("NUM_GENERATIONS")
+    if num_generations:
+        config["trl"]["num_generations"] = int(num_generations)
 
     if log_wandb:
         config["wandb_runid"] = f"{task_id}_{expected_repo_name}"
