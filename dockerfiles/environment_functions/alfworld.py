@@ -85,10 +85,21 @@ def alfworld_rollout_first_prompt_and_completion(prompts: list[str], trainer, ma
     ]
 
     # --- 3. Batch Loop ---
-    # We use a random game_id for the batch, or you could sample per item if preferred
-    game_id = random.randint(0, DATA_LEN - 1)
+    # Sample one game_id per prompt group so duplicates share a game, but groups differ.
+    if trainer.model.training:
+        num_generations = getattr(trainer, "num_generations", 1)
+    else:
+        num_generations = getattr(trainer, "num_generations_eval", getattr(trainer, "num_generations", 1))
+    num_generations = max(1, int(num_generations))
+    current_group_game_id = None
+    current_group_index = None
 
     for i, prompt in enumerate(prompts):
+        group_index = i // num_generations
+        if group_index != current_group_index:
+            current_group_index = group_index
+            current_group_game_id = random.randint(0, DATA_LEN - 1)
+        game_id = current_group_game_id
         episode_prompt_ids: list[int] = []
         episode_completion_ids: list[int] = []
         episode_logprobs: list[float] = []
