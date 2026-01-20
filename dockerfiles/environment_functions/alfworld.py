@@ -65,6 +65,8 @@ def alfworld_rollout_first_prompt_and_completion(prompts: list[str], trainer, ma
     all_episode_logprobs: list[list[float]] = []
     all_episode_rewards: list[float] = []
     all_episode_action_masks: list[list[int]] = []
+    all_episode_turns: list[int] = []
+    all_episode_truncated: list[bool] = []
 
     tokenizer = trainer.processing_class
     DATA_LEN = 2500
@@ -96,6 +98,7 @@ def alfworld_rollout_first_prompt_and_completion(prompts: list[str], trainer, ma
         done = False
         solved = False
         turn_number = 0
+        episode_truncated = False
         
         # --- Reset Environment (POST /reset) ---
         # Reuse existing env_id, just change the game
@@ -136,6 +139,7 @@ def alfworld_rollout_first_prompt_and_completion(prompts: list[str], trainer, ma
             # Check if prompt exceeds max length - end episode early to prevent context overflow
             if len(prompt_ids) > MAX_PROMPT_LEN:
                 print(f"Warning: Prompt exceeded {MAX_PROMPT_LEN} tokens ({len(prompt_ids)}) at turn {turn_number}, ending episode early")
+                episode_truncated = True
                 done = True
                 break
 
@@ -226,6 +230,10 @@ def alfworld_rollout_first_prompt_and_completion(prompts: list[str], trainer, ma
             episode_completion_ids = episode_completion_ids[:MAX_EPISODE_TOKENS]
             episode_logprobs = episode_logprobs[:MAX_EPISODE_TOKENS]
             episode_action_mask = episode_action_mask[:MAX_EPISODE_TOKENS]
+            episode_truncated = True
+
+        if not done and turn_number >= max_turns:
+            episode_truncated = True
 
         train_reward = (1.0 if solved else 0.0) - 0.01 * float(invalid_count)
         all_episode_prompt_ids.append(episode_prompt_ids)
@@ -233,13 +241,17 @@ def alfworld_rollout_first_prompt_and_completion(prompts: list[str], trainer, ma
         all_episode_logprobs.append(episode_logprobs)
         all_episode_rewards.append(train_reward)
         all_episode_action_masks.append(episode_action_mask)
+        all_episode_turns.append(turn_number)
+        all_episode_truncated.append(episode_truncated)
 
     return {
         "prompt_ids": all_episode_prompt_ids,
         "completion_ids": all_episode_completion_ids,
         "logprobs": all_episode_logprobs,
         "env_rewards": all_episode_rewards,
-        "action_mask": all_episode_action_masks
+        "action_mask": all_episode_action_masks,
+        "episode_turns": all_episode_turns,
+        "episode_truncated": all_episode_truncated,
     }
 
 def alfworld_rollout_reward_func(completions, **kwargs):

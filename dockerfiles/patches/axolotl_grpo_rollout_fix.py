@@ -138,6 +138,66 @@ class ActionMaskedGRPOTrainer(AxolotlGRPOTrainer):
 
         loss_mask = completion_mask if action_mask is None else completion_mask * action_mask
 
+        if action_mask is not None:
+            effective_action_mask = loss_mask if not self.tools else loss_mask * tool_mask
+            action_lengths = effective_action_mask.sum(dim=1)
+            agg_action_lengths = self.accelerator.gather(action_lengths)
+            total_action_tokens = agg_action_lengths.sum()
+
+            if mode == "train":
+                if not hasattr(self, "_action_tokens_seen"):
+                    self._action_tokens_seen = 0
+                self._action_tokens_seen += total_action_tokens.item()
+                self.state.num_input_tokens_seen = self._action_tokens_seen
+            self._metrics[mode]["num_tokens"] = [self.state.num_input_tokens_seen]
+
+            def _replace_metric(name: str, value: float) -> None:
+                if self._metrics[mode].get(name):
+                    self._metrics[mode][name][-1] = value
+                else:
+                    self._metrics[mode][name].append(value)
+
+            if agg_action_lengths.numel() > 0:
+                _replace_metric("completions/mean_length", agg_action_lengths.float().mean().item())
+                _replace_metric("completions/min_length", agg_action_lengths.float().min().item())
+                _replace_metric("completions/max_length", agg_action_lengths.float().max().item())
+
+            if extra_fields and "episode_truncated" in extra_fields:
+                episode_truncated = extra_fields["episode_truncated"]
+                if isinstance(episode_truncated, list):
+                    truncated_tensor = torch.tensor(episode_truncated, device=device, dtype=torch.bool)
+                else:
+                    truncated_tensor = torch.tensor(
+                        [bool(episode_truncated)] * len(completion_ids_list), device=device, dtype=torch.bool
+                    )
+                agg_is_truncated = self.accelerator.gather(truncated_tensor)
+            else:
+                eos_and_pad = [self.eos_token_id, self.pad_token_id]
+                is_truncated = torch.tensor([ids[-1] not in eos_and_pad for ids in completion_ids_list], device=device)
+                agg_is_truncated = self.accelerator.gather(is_truncated)
+
+            _replace_metric("completions/clipped_ratio", agg_is_truncated.float().mean().item())
+
+            term_action_lengths = agg_action_lengths[~agg_is_truncated]
+            if term_action_lengths.numel() == 0:
+                term_action_lengths = torch.zeros(1, device=device)
+            _replace_metric("completions/mean_terminated_length", term_action_lengths.float().mean().item())
+            _replace_metric("completions/min_terminated_length", term_action_lengths.float().min().item())
+            _replace_metric("completions/max_terminated_length", term_action_lengths.float().max().item())
+
+            _replace_metric("rollout/action_tokens_mean", agg_action_lengths.float().mean().item())
+            if extra_fields and "episode_turns" in extra_fields:
+                episode_turns = extra_fields["episode_turns"]
+                if isinstance(episode_turns, list):
+                    turns_tensor = torch.tensor(episode_turns, device=device, dtype=torch.float32)
+                else:
+                    turns_tensor = torch.tensor(
+                        [float(episode_turns)] * len(completion_ids_list), device=device, dtype=torch.float32
+                    )
+                agg_turns = self.accelerator.gather(turns_tensor)
+                _replace_metric("rollout/episode_turns_mean", agg_turns.mean().item())
+            _replace_metric("rollout/truncated_ratio", agg_is_truncated.float().mean().item())
+
         # Concatenate prompt_mask with completion_mask for logit computation
         prompt_completion_ids = torch.cat([prompt_ids, completion_ids], dim=1)  # (B, P+C)
         attention_mask = torch.cat([prompt_mask, completion_mask], dim=1)  # (B, P+C)
