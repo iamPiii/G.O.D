@@ -5,7 +5,8 @@ For Environment Tasks miners are expected to implement their own rollout functio
 You can always expect the environment server url for that task to be available in the env variable 'ENVIRONMENT_SERVER_URL'.
 For most (if not all) tasks the environment server can be expected to have a standardized interface with /reset, /step, and /observe endpoints.
 While this example is for Alfworld the design should work for all standardized environment tasks.
-This is a unoptimized implementation that only trains the model on its first interaction with the environment while using a reward signal from its entire interaction.
+This implementation stores a full episode rollout and returns an action mask so the trainer can
+optimize only on action tokens while still conditioning on observations.
 Read more about rollout functions here: https://huggingface.co/docs/trl/main/en/openenv
 """
 
@@ -15,7 +16,11 @@ def alfworld_rollout_first_prompt_and_completion(prompts: list[str], trainer, ma
     import random
     import requests
     import json
-    
+
+    # --- Constants for context length management ---
+    MAX_EPISODE_TOKENS = 16384  # Max tokens for completion sequence (truncate if exceeded)
+    MAX_PROMPT_LEN = 24576      # Max prompt tokens before ending episode early
+
     # --- 1. Static Initialization (Once per Rank) ---
     # We check if the function has already established a connection for this worker
     if not getattr(alfworld_rollout_first_prompt_and_completion, "initialized", False):
@@ -59,6 +64,7 @@ def alfworld_rollout_first_prompt_and_completion(prompts: list[str], trainer, ma
     all_episode_completion_ids: list[list[int]] = []
     all_episode_logprobs: list[list[float]] = []
     all_episode_rewards: list[float] = []
+    all_episode_action_masks: list[list[int]] = []
 
     tokenizer = trainer.processing_class
     DATA_LEN = 2500
@@ -84,6 +90,8 @@ def alfworld_rollout_first_prompt_and_completion(prompts: list[str], trainer, ma
         episode_prompt_ids: list[int] = []
         episode_completion_ids: list[int] = []
         episode_logprobs: list[float] = []
+        episode_action_mask: list[int] = []
+        prev_full_ids: list[int] | None = None
         invalid_count = 0
         done = False
         solved = False
@@ -125,10 +133,41 @@ def alfworld_rollout_first_prompt_and_completion(prompts: list[str], trainer, ma
             logprobs = rollout_outputs.get("logprobs", [])
             completion_text = tokenizer.decode(completion_ids, skip_special_tokens=True).strip()
 
+            # Check if prompt exceeds max length - end episode early to prevent context overflow
+            if len(prompt_ids) > MAX_PROMPT_LEN:
+                print(f"Warning: Prompt exceeded {MAX_PROMPT_LEN} tokens ({len(prompt_ids)}) at turn {turn_number}, ending episode early")
+                done = True
+                break
+
             if turn_number == 0:
                 episode_prompt_ids = prompt_ids
-                episode_completion_ids = completion_ids
-                episode_logprobs = logprobs
+                prev_full_ids = prompt_ids.copy()
+            else:
+                if prev_full_ids is None:
+                    prev_full_ids = prompt_ids.copy()
+                elif prompt_ids[: len(prev_full_ids)] != prev_full_ids:
+                    # BPE mismatch - tokenizer produced different IDs for same prefix text
+                    # Graceful fallback: skip delta masking for this turn, just add completion
+                    print(
+                        f"Warning: BPE mismatch at turn {turn_number} (expected prefix {len(prev_full_ids)}, "
+                        f"got {len(prompt_ids)} tokens). Skipping delta mask for this turn."
+                    )
+                    # Reset prev_full_ids to current prompt to try to recover alignment
+                    prev_full_ids = prompt_ids.copy()
+                else:
+                    delta_prompt_ids = prompt_ids[len(prev_full_ids) :]
+                    if delta_prompt_ids:
+                        episode_completion_ids.extend(delta_prompt_ids)
+                        episode_logprobs.extend([0.0] * len(delta_prompt_ids))
+                        episode_action_mask.extend([0] * len(delta_prompt_ids))
+                    prev_full_ids = prompt_ids.copy()
+
+            if completion_ids:
+                episode_completion_ids.extend(completion_ids)
+                episode_logprobs.extend(logprobs)
+                episode_action_mask.extend([1] * len(completion_ids))
+                if prev_full_ids is not None:
+                    prev_full_ids = prev_full_ids + completion_ids
 
             messages.append({"role": "assistant", "content": completion_text})
 
@@ -180,18 +219,27 @@ def alfworld_rollout_first_prompt_and_completion(prompts: list[str], trainer, ma
                 messages.append({"role": "user", "content": formatted_observation})
 
             turn_number += 1
-        
+
+        # Truncate episode if completion sequence exceeds max length
+        if len(episode_completion_ids) > MAX_EPISODE_TOKENS:
+            print(f"Warning: Episode completion exceeded {MAX_EPISODE_TOKENS} tokens ({len(episode_completion_ids)}), truncating")
+            episode_completion_ids = episode_completion_ids[:MAX_EPISODE_TOKENS]
+            episode_logprobs = episode_logprobs[:MAX_EPISODE_TOKENS]
+            episode_action_mask = episode_action_mask[:MAX_EPISODE_TOKENS]
+
         train_reward = (1.0 if solved else 0.0) - 0.01 * float(invalid_count)
         all_episode_prompt_ids.append(episode_prompt_ids)
         all_episode_completion_ids.append(episode_completion_ids)
         all_episode_logprobs.append(episode_logprobs)
         all_episode_rewards.append(train_reward)
+        all_episode_action_masks.append(episode_action_mask)
 
     return {
         "prompt_ids": all_episode_prompt_ids,
         "completion_ids": all_episode_completion_ids,
         "logprobs": all_episode_logprobs,
-        "env_rewards": all_episode_rewards
+        "env_rewards": all_episode_rewards,
+        "action_mask": all_episode_action_masks
     }
 
 def alfworld_rollout_reward_func(completions, **kwargs):

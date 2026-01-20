@@ -142,6 +142,7 @@ class Job(BaseModel):
 
 
 TextDatasetType = InstructTextDatasetType | DpoDatasetType | GrpoDatasetType | ChatTemplateDatasetType | EnvironmentDatasetType
+TextDatasetType = InstructTextDatasetType | DpoDatasetType | GrpoDatasetType | ChatTemplateDatasetType | EnvironmentDatasetType
 
 
 class TextJob(Job):
@@ -186,6 +187,7 @@ class TaskType(str, Enum):
     DPOTASK = "DpoTask"
     GRPOTASK = "GrpoTask"
     CHATTASK = "ChatTask"
+    ENVIRONMENTTASK = "EnvTask"
     ENVIRONMENTTASK = "EnvTask"
 
     def __hash__(self):

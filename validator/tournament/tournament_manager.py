@@ -3,6 +3,7 @@ import math
 import random
 from datetime import datetime
 from datetime import timedelta
+from datetime import timedelta
 from datetime import timezone
 
 from fiber.chain.models import Node
@@ -62,6 +63,7 @@ from validator.tournament import constants as t_cst
 from validator.tournament.benchmark_utils import create_benchmark_tasks_for_tournament_winner
 from validator.tournament.repo_uploader import upload_tournament_participant_repository
 from validator.tournament.task_creator import create_environment_tournament_tasks
+from validator.tournament.task_creator import create_environment_tournament_tasks
 from validator.tournament.task_creator import create_image_tournament_tasks
 from validator.tournament.task_creator import create_text_tournament_tasks
 from validator.tournament.task_creator import replace_tournament_task
@@ -92,8 +94,22 @@ def count_failed_trainings_percentage(trainings: dict[str, str]) -> bool:
 
 
 def organise_tournament_round(nodes: list[Node], config: Config, tournament_type: TournamentType | None = None) -> Round:
+def organise_tournament_round(nodes: list[Node], config: Config, tournament_type: TournamentType | None = None) -> Round:
     nodes_copy = nodes.copy()
     random.shuffle(nodes_copy)
+
+    # Environment tournaments always use a single group round with all participants
+    # Minimum group size of 5 required for environment tournaments
+    if tournament_type == TournamentType.ENVIRONMENT:
+        if len(nodes_copy) < t_cst.MIN_ENVIRONMENT_GROUP_SIZE:
+            logger.warning(
+                f"Environment tournament requires minimum 5 participants, but only {len(nodes_copy)} provided. "
+                f"Cannot create tournament round."
+            )
+            raise ValueError(f"Environment tournament requires minimum 5 participants, got {len(nodes_copy)}")
+        all_hotkeys = [node.hotkey for node in nodes_copy]
+        single_group = Group(member_ids=all_hotkeys, task_ids=[])
+        return GroupRound(groups=[single_group])
 
     # Environment tournaments always use a single group round with all participants
     # Minimum group size of 5 required for environment tournaments
@@ -152,8 +168,12 @@ async def _create_first_round(
     round_id = generate_round_id(tournament_id, 1)
     with LogContext(round_id=round_id):
         round_structure = organise_tournament_round(nodes, config, tournament_type)
+        round_structure = organise_tournament_round(nodes, config, tournament_type)
 
         round_type = RoundType.KNOCKOUT if isinstance(round_structure, KnockoutRound) else RoundType.GROUP
+
+        # Environment tournaments only have group stage, so mark it as final
+        is_final_round = tournament_type == TournamentType.ENVIRONMENT
 
         # Environment tournaments only have group stage, so mark it as final
         is_final_round = tournament_type == TournamentType.ENVIRONMENT
@@ -163,6 +183,7 @@ async def _create_first_round(
             tournament_id=tournament_id,
             round_number=1,
             round_type=round_type,
+            is_final_round=is_final_round,
             is_final_round=is_final_round,
             status=RoundStatus.PENDING,
         )
@@ -183,7 +204,12 @@ async def _create_tournament_tasks(
     if tournament_type == TournamentType.TEXT:
         tasks = await create_text_tournament_tasks(round_structure, tournament_id, round_id, config, is_final)
     elif tournament_type == TournamentType.IMAGE:
+    elif tournament_type == TournamentType.IMAGE:
         tasks = await create_image_tournament_tasks(round_structure, tournament_id, round_id, config, is_final)
+    elif tournament_type == TournamentType.ENVIRONMENT:
+        tasks = await create_environment_tournament_tasks(round_structure, tournament_id, round_id, config, is_final)
+    else:
+        raise ValueError(f"Unknown tournament type: {tournament_type}")
     elif tournament_type == TournamentType.ENVIRONMENT:
         tasks = await create_environment_tournament_tasks(round_structure, tournament_id, round_id, config, is_final)
     else:
@@ -200,7 +226,23 @@ async def assign_nodes_to_tournament_tasks(
     tournament = await get_tournament(tournament_id, psql_db)
     is_environment_tournament = tournament and tournament.tournament_type == TournamentType.ENVIRONMENT
 
+    tournament = await get_tournament(tournament_id, psql_db)
+    is_environment_tournament = tournament and tournament.tournament_type == TournamentType.ENVIRONMENT
+
     if isinstance(round_structure, GroupRound):
+        # For environment tournaments, collect all participants from all groups
+        if is_environment_tournament:
+            logger.info("Processing ENVIRONMENT tournament - assigning all participants + boss to single task")
+            all_participants = []
+            for group in round_structure.groups:
+                all_participants.extend(group.member_ids)
+
+            if EMISSION_BURN_HOTKEY not in all_participants:
+                all_participants.append(EMISSION_BURN_HOTKEY)
+                logger.info(f"Adding boss contestant {EMISSION_BURN_HOTKEY} to environment tournament task")
+        else:
+            all_participants = None
+
         # For environment tournaments, collect all participants from all groups
         if is_environment_tournament:
             logger.info("Processing ENVIRONMENT tournament - assigning all participants + boss to single task")
@@ -221,14 +263,22 @@ async def assign_nodes_to_tournament_tasks(
             else:
                 current_group_id = f"{round_id}_group_{i + 1:03d}"
                 participants_to_assign = group.member_ids
+            if is_environment_tournament:
+                current_group_id = f"{round_id}_group_001"
+                participants_to_assign = all_participants
+            else:
+                current_group_id = f"{round_id}_group_{i + 1:03d}"
+                participants_to_assign = group.member_ids
 
             group_tasks = await get_tournament_tasks(round_id, psql_db)
+            group_tasks = [task for task in group_tasks if task.group_id == current_group_id]
             group_tasks = [task for task in group_tasks if task.group_id == current_group_id]
 
             for task in group_tasks:
                 already_assigned_nodes = await task_sql.get_nodes_assigned_to_task(task.task_id, psql_db)
                 already_assigned_hotkeys = {node.hotkey for node in already_assigned_nodes}
 
+                for hotkey in participants_to_assign:
                 for hotkey in participants_to_assign:
                     if hotkey in already_assigned_hotkeys:
                         logger.info(f"Node {hotkey} already assigned to task {task.task_id}")
@@ -244,6 +294,10 @@ async def assign_nodes_to_tournament_tasks(
                         logger.info(
                             f"Assigned {hotkey} to group task {task.task_id} with expected_repo_name: {expected_repo_name}"
                         )
+
+            if is_environment_tournament:
+                logger.info(f"Finished assigning {len(all_participants)} participants to environment tournament task(s)")
+                break
 
             if is_environment_tournament:
                 logger.info(f"Finished assigning {len(all_participants)} participants to environment tournament task(s)")
@@ -298,6 +352,10 @@ async def create_next_round(
     tournament: TournamentData, completed_round: TournamentRoundData, winners: list[str], config, psql_db: PSQLDB
 ):
     """Create the next round of the tournament."""
+    if tournament.tournament_type == TournamentType.ENVIRONMENT:
+        logger.info(f"Environment tournament {tournament.tournament_id} only has group stage, no next round to create")
+        return
+
     if tournament.tournament_type == TournamentType.ENVIRONMENT:
         logger.info(f"Environment tournament {tournament.tournament_id} only has group stage, no next round to create")
         return
@@ -463,13 +521,48 @@ async def advance_tournament(tournament: TournamentData, completed_round: Tourna
                     logger.info(f"Final round participants from DB: {participant1}, {participant2}")
                     logger.info(f"Winner determined by get_round_winners: {winner}")
                     logger.info(f"Tournament base_winner_hotkey (previous champion): {tournament.base_winner_hotkey}")
+            if tournament.tournament_type == TournamentType.ENVIRONMENT:
+                logger.info("Environment tournament: uploading winner repository only")
+                if winner != cst.EMISSION_BURN_HOTKEY:
+                    try:
+                        logger.info(f"Creating benchmark tasks for tournament winner {winner}")
+                        benchmark_task_ids = await create_benchmark_tasks_for_tournament_winner(
+                            tournament.tournament_id, winner, config
+                        )
+                        logger.info(f"Created {len(benchmark_task_ids)} benchmark tasks for tournament winner {winner}")
+                    except Exception as e:
+                        logger.error(f"Error creating benchmark tasks for tournament winner {winner}: {str(e)}")
 
+                logger.info(f"Uploading position 1 repository for hotkey: {winner}")
+                await upload_participant_repository(
+                    tournament.tournament_id, tournament.tournament_type, winner, 1, config, psql_db
+                )
+            else:
+                try:
+                    participant1, participant2 = await get_final_round_participants(completed_round, psql_db)
+                    logger.info(f"Final round participants from DB: {participant1}, {participant2}")
+                    logger.info(f"Winner determined by get_round_winners: {winner}")
+                    logger.info(f"Tournament base_winner_hotkey (previous champion): {tournament.base_winner_hotkey}")
+
+                    loser = participant2 if participant1 == winner else participant1
+                    logger.info(f"Loser determined: {loser}")
                     loser = participant2 if participant1 == winner else participant1
                     logger.info(f"Loser determined: {loser}")
 
                     position_1_upload = winner
                     position_2_upload = loser
+                    position_1_upload = winner
+                    position_2_upload = loser
 
+                    if winner != cst.EMISSION_BURN_HOTKEY:
+                        try:
+                            logger.info(f"Creating benchmark tasks for tournament winner {winner}")
+                            benchmark_task_ids = await create_benchmark_tasks_for_tournament_winner(
+                                tournament.tournament_id, winner, config
+                            )
+                            logger.info(f"Created {len(benchmark_task_ids)} benchmark tasks for tournament winner {winner}")
+                        except Exception as e:
+                            logger.error(f"Error creating benchmark tasks for tournament winner {winner}: {str(e)}")
                     if winner != cst.EMISSION_BURN_HOTKEY:
                         try:
                             logger.info(f"Creating benchmark tasks for tournament winner {winner}")
@@ -484,7 +577,20 @@ async def advance_tournament(tournament: TournamentData, completed_round: Tourna
                     await upload_participant_repository(
                         tournament.tournament_id, tournament.tournament_type, position_1_upload, 1, config, psql_db
                     )
+                    logger.info(f"Uploading position 1 repository for hotkey: {position_1_upload}")
+                    await upload_participant_repository(
+                        tournament.tournament_id, tournament.tournament_type, position_1_upload, 1, config, psql_db
+                    )
 
+                    logger.info(f"Uploading position 2 repository for hotkey: {position_2_upload}")
+                    await upload_participant_repository(
+                        tournament.tournament_id, tournament.tournament_type, position_2_upload, 2, config, psql_db
+                    )
+                except Exception as e:
+                    logger.error(f"Error determining final round participants: {e}")
+                    await upload_participant_repository(
+                        tournament.tournament_id, tournament.tournament_type, winner, 1, config, psql_db
+                    )
                     logger.info(f"Uploading position 2 repository for hotkey: {position_2_upload}")
                     await upload_participant_repository(
                         tournament.tournament_id, tournament.tournament_type, position_2_upload, 2, config, psql_db
@@ -548,6 +654,7 @@ async def populate_tournament_participants(tournament_id: str, config: Config, p
     if tournament.tournament_type == TournamentType.TEXT:
         participation_fee_rao = t_cst.TOURNAMENT_TEXT_PARTICIPATION_FEE_RAO
         fee_description = "0.2 TAO"
+    elif tournament.tournament_type == TournamentType.IMAGE:
     elif tournament.tournament_type == TournamentType.IMAGE:
         participation_fee_rao = t_cst.TOURNAMENT_IMAGE_PARTICIPATION_FEE_RAO
         fee_description = "0.15 TAO"
@@ -684,14 +791,22 @@ async def populate_tournament_participants(tournament_id: str, config: Config, p
             min_required_miners = cst.MIN_MINERS_FOR_TOURN
 
         if miners_that_accept_and_give_repos >= min_required_miners:
+        if tournament.tournament_type == TournamentType.ENVIRONMENT:
+            min_required_miners = cst.MIN_MINERS_FOR_ENV_TOURN
+        else:
+            min_required_miners = cst.MIN_MINERS_FOR_TOURN
+
+        if miners_that_accept_and_give_repos >= min_required_miners:
             logger.info(
                 f"Tournament {tournament_id} has sufficient miners "
+                f"({miners_that_accept_and_give_repos} >= {min_required_miners})"
                 f"({miners_that_accept_and_give_repos} >= {min_required_miners})"
             )
             return miners_that_accept_and_give_repos
 
         logger.warning(
             f"Tournament {tournament_id} only has {miners_that_accept_and_give_repos} miners that accept and give repos, "
+            f"need at least {min_required_miners}. Waiting 30 minutes and retrying..."
             f"need at least {min_required_miners}. Waiting 30 minutes and retrying..."
         )
         await asyncio.sleep(30 * 60)
@@ -1058,11 +1173,17 @@ async def process_tournament_scheduling(config: Config):
 
     Tournaments only start during their scheduled day/hour window. If a scheduled start is missed,
     the system waits until the next week's scheduled time rather than starting late.
+    Checks text, image, and environment tournaments independently.
+
+    Tournaments only start during their scheduled day/hour window. If a scheduled start is missed,
+    the system waits until the next week's scheduled time rather than starting late.
     """
     logger.info("Processing tournament scheduling...")
 
     while True:
         try:
+            # Check all tournament types
+            for tournament_type in [TournamentType.TEXT, TournamentType.IMAGE, TournamentType.ENVIRONMENT]:
             # Check all tournament types
             for tournament_type in [TournamentType.TEXT, TournamentType.IMAGE, TournamentType.ENVIRONMENT]:
                 await check_and_start_tournament(tournament_type, config.psql_db, config)
@@ -1097,7 +1218,10 @@ async def check_and_start_tournament(tournament_type: TournamentType, psql_db: P
         if latest_tournament and latest_tournament.status not in {TournamentStatus.ACTIVE, TournamentStatus.PENDING}:
             completed_at = await get_tournament_completion_time(latest_tournament.tournament_id, psql_db)
             if await should_start_new_tournament_after_interval(completed_at or created_at, tournament_type):
+            if await should_start_new_tournament_after_interval(completed_at or created_at, tournament_type):
                 logger.info(
+                    f"Starting new {tournament_type.value} tournament at scheduled time "
+                    f"(previous tournament {latest_tournament.tournament_id} completed)"
                     f"Starting new {tournament_type.value} tournament at scheduled time "
                     f"(previous tournament {latest_tournament.tournament_id} completed)"
                 )
@@ -1106,6 +1230,7 @@ async def check_and_start_tournament(tournament_type: TournamentType, psql_db: P
                 new_tournament_id = await create_basic_tournament(tournament_type, psql_db, config)
                 logger.info(f"Created new {tournament_type.value} tournament: {new_tournament_id}")
             else:
+                logger.info(f"Waiting for next scheduled start time for {tournament_type.value} tournament")
                 logger.info(f"Waiting for next scheduled start time for {tournament_type.value} tournament")
         elif not latest_tournament:
             # No tournaments of this type exist, create the first one
@@ -1127,7 +1252,11 @@ async def get_tournament_completion_time(tournament_id: str, psql_db: PSQLDB) ->
 
 
 async def should_start_new_tournament_after_interval(last_created_at, tournament_type: TournamentType) -> bool:
+async def should_start_new_tournament_after_interval(last_created_at, tournament_type: TournamentType) -> bool:
     """
+    Check if we're currently in the scheduled tournament start window for the given tournament type.
+    Tournaments only start during their scheduled day and hour. If the window is missed,
+    we wait until the next week's scheduled time.
     Check if we're currently in the scheduled tournament start window for the given tournament type.
     Tournaments only start during their scheduled day and hour. If the window is missed,
     we wait until the next week's scheduled time.
@@ -1140,6 +1269,88 @@ async def should_start_new_tournament_after_interval(last_created_at, tournament
     if last_created_at.tzinfo is None:
         last_created_at = last_created_at.replace(tzinfo=timezone.utc)
 
+    scheduled_day, scheduled_hour = _get_tournament_schedule(tournament_type)
+
+    next_start_time = _calculate_next_tournament_start_time(last_created_at, tournament_type)
+
+    # Check if we're currently in the scheduled window (same day and hour as the scheduled time)
+    # We allow starting anytime during the scheduled hour
+    is_scheduled_day = now.weekday() == scheduled_day
+    is_scheduled_hour = now.hour == scheduled_hour
+    is_after_next_start = now >= next_start_time
+
+    if is_scheduled_day and is_scheduled_hour and is_after_next_start:
+        days_since_last = (now - last_created_at).days
+        logger.info(
+            f"{tournament_type.value} tournament - Days since last: {days_since_last}, "
+            f"currently in scheduled window ({next_start_time.strftime('%Y-%m-%d %H:%M UTC')}) - ready to start"
+        )
+        return True
+    else:
+        time_until_start = (next_start_time - now).total_seconds() / 3600
+        if is_after_next_start and not (is_scheduled_day and is_scheduled_hour):
+            next_next_start = _calculate_next_tournament_start_time(now, tournament_type)
+            time_until_start = (next_next_start - now).total_seconds() / 3600
+            logger.info(
+                f"{tournament_type.value} tournament - Missed scheduled window, "
+                f"next opportunity: {next_next_start.strftime('%Y-%m-%d %H:%M UTC')} "
+                f"(in {time_until_start:.2f} hours)"
+            )
+        else:
+            logger.info(
+                f"{tournament_type.value} tournament - Next scheduled start: {next_start_time.strftime('%Y-%m-%d %H:%M UTC')} "
+                f"(in {time_until_start:.2f} hours) - waiting for scheduled time"
+            )
+        return False
+
+
+def _get_tournament_schedule(tournament_type: TournamentType) -> tuple[int, int]:
+    """
+    Get the scheduled day of week and hour for a specific tournament type.
+
+    Returns (day_of_week, hour) where day_of_week is 0=Monday through 6=Sunday.
+    """
+    if tournament_type == TournamentType.ENVIRONMENT:
+        return (cst.TOURNAMENT_SCHEDULE_ENVIRONMENT_DAY_OF_WEEK, cst.TOURNAMENT_SCHEDULE_ENVIRONMENT_HOUR)
+    elif tournament_type == TournamentType.TEXT:
+        return (cst.TOURNAMENT_SCHEDULE_TEXT_DAY_OF_WEEK, cst.TOURNAMENT_SCHEDULE_TEXT_HOUR)
+    elif tournament_type == TournamentType.IMAGE:
+        return (cst.TOURNAMENT_SCHEDULE_IMAGE_DAY_OF_WEEK, cst.TOURNAMENT_SCHEDULE_IMAGE_HOUR)
+    else:
+        # Default fallback
+        return (0, 14)
+
+
+def _calculate_next_tournament_start_time(last_created_at: datetime, tournament_type: TournamentType) -> datetime:
+    """
+    Calculate the next valid tournament start time based on configured day of week and hour for the tournament type.
+
+    Returns the next occurrence of the scheduled day/hour that is after last_created_at.
+    """
+    # Get current time for reference
+    now = datetime.now(timezone.utc)
+
+    # Use the later of last_created_at or now as our reference point
+    reference_time = max(last_created_at, now)
+
+    target_weekday, target_hour = _get_tournament_schedule(tournament_type)
+
+    # Find the next occurrence of the target day
+    current_weekday = reference_time.weekday()
+    days_until_target = (target_weekday - current_weekday) % 7
+
+    # If days_until_target is 0, we're on the target day - check if time has passed
+    if days_until_target == 0:
+        candidate = reference_time.replace(hour=target_hour, minute=0, second=0, microsecond=0)
+        if candidate > reference_time:
+            return candidate
+        # Time has passed today, schedule for next week
+        days_until_target = 7
+
+    next_target_day = reference_time + timedelta(days=days_until_target)
+    next_start = next_target_day.replace(hour=target_hour, minute=0, second=0, microsecond=0)
+
+    return next_start
     scheduled_day, scheduled_hour = _get_tournament_schedule(tournament_type)
 
     next_start_time = _calculate_next_tournament_start_time(last_created_at, tournament_type)
