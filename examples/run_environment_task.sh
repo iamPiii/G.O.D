@@ -48,6 +48,8 @@ docker run --rm --gpus all \
   --cap-drop=ALL \
   --memory=64g \
   --cpus=8 \
+  -e PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True \
+  -e WANDB_MODE=online \
   --volume "$CHECKPOINTS_DIR:/cache:rw" \
   --volume "$OUTPUTS_DIR:/app/checkpoints/:rw" \
   --name grpo-text-trainer-example \

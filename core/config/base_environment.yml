@@ -67,13 +67,14 @@ s2_attention:
 use_wandb: true
 wandb_project: Gradients-Rollout
 wandb_entity:
-wandb_mode:
+wandb_mode: online
 wandb_run: Gradients-Rollout
 wandb_runid: default
 
 eval_table_size:
 max_steps: 1000
 save_steps: 20
+hub_strategy: every_save
 debug:
 deepspeed:
 weight_decay: 0.0

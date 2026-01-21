@@ -67,8 +67,34 @@ def alfworld_rollout_first_prompt_and_completion(prompts: list[str], trainer, ma
     all_episode_action_masks: list[list[int]] = []
     all_episode_turns: list[int] = []
     all_episode_truncated: list[bool] = []
+    all_episode_mismatch_counts: list[int] = []
 
     tokenizer = trainer.processing_class
+
+    def _apply_chat_template_ids(messages: list[dict[str, str]], *, add_generation_prompt: bool) -> list[int] | None:
+        apply_fn = getattr(tokenizer, "apply_chat_template", None)
+        if apply_fn is None and hasattr(tokenizer, "tokenizer"):
+            apply_fn = getattr(tokenizer.tokenizer, "apply_chat_template", None)
+        if apply_fn is None:
+            return None
+        return apply_fn(messages, tokenize=True, add_generation_prompt=add_generation_prompt)
+
+    def _recover_delta_prompt_ids(messages: list[dict[str, str]]) -> list[int] | None:
+        if not messages or messages[-1].get("role") != "user":
+            return None
+        prev_messages = messages[:-1]
+        prev_prompt_ids = _apply_chat_template_ids(prev_messages, add_generation_prompt=False)
+        curr_prompt_ids = _apply_chat_template_ids(messages, add_generation_prompt=True)
+        if prev_prompt_ids is None or curr_prompt_ids is None:
+            return None
+        if curr_prompt_ids[: len(prev_prompt_ids)] == prev_prompt_ids:
+            return curr_prompt_ids[len(prev_prompt_ids) :]
+        prefix_len = 0
+        for prev_id, curr_id in zip(prev_prompt_ids, curr_prompt_ids, strict=False):
+            if prev_id != curr_id:
+                break
+            prefix_len += 1
+        return curr_prompt_ids[prefix_len:]
     DATA_LEN = 2500
     TIMEOUT = 2400
 
@@ -110,6 +136,7 @@ def alfworld_rollout_first_prompt_and_completion(prompts: list[str], trainer, ma
         solved = False
         turn_number = 0
         episode_truncated = False
+        mismatch_count = 0
         
         # --- Reset Environment (POST /reset) ---
         # Reuse existing env_id, just change the game
@@ -145,7 +172,11 @@ def alfworld_rollout_first_prompt_and_completion(prompts: list[str], trainer, ma
             prompt_ids = rollout_outputs.get("prompt_ids", [])
             completion_ids = rollout_outputs.get("completion_ids", [])
             logprobs = rollout_outputs.get("logprobs", [])
-            completion_text = tokenizer.decode(completion_ids, skip_special_tokens=True).strip()
+            completion_text_raw = rollout_outputs.get("text")
+            if completion_text_raw is None:
+                if "text" not in rollout_outputs:
+                    print("Warning: rollout_outputs missing text; falling back to decode.")
+                completion_text_raw = tokenizer.decode(completion_ids, skip_special_tokens=False)
 
             # Check if prompt exceeds max length - end episode early to prevent context overflow
             if len(prompt_ids) > MAX_PROMPT_LEN:
@@ -162,11 +193,17 @@ def alfworld_rollout_first_prompt_and_completion(prompts: list[str], trainer, ma
                     prev_full_ids = prompt_ids.copy()
                 elif prompt_ids[: len(prev_full_ids)] != prev_full_ids:
                     # BPE mismatch - tokenizer produced different IDs for same prefix text
-                    # Graceful fallback: skip delta masking for this turn, just add completion
+                    # Attempt to recover delta prompt tokens to avoid dropping observations
                     print(
                         f"Warning: BPE mismatch at turn {turn_number} (expected prefix {len(prev_full_ids)}, "
-                        f"got {len(prompt_ids)} tokens). Skipping delta mask for this turn."
+                        f"got {len(prompt_ids)} tokens). Attempting delta recovery."
                     )
+                    mismatch_count += 1
+                    recovered_delta = _recover_delta_prompt_ids(messages)
+                    if recovered_delta:
+                        episode_completion_ids.extend(recovered_delta)
+                        episode_logprobs.extend([0.0] * len(recovered_delta))
+                        episode_action_mask.extend([0] * len(recovered_delta))
                     # Reset prev_full_ids to current prompt to try to recover alignment
                     prev_full_ids = prompt_ids.copy()
                 else:
@@ -184,12 +221,14 @@ def alfworld_rollout_first_prompt_and_completion(prompts: list[str], trainer, ma
                 if prev_full_ids is not None:
                     prev_full_ids = prev_full_ids + completion_ids
 
-            messages.append({"role": "assistant", "content": completion_text})
+            messages.append({"role": "assistant", "content": completion_text_raw})
 
             # --- Parse Action ---
-            action_to_send = completion_text
-            if action_to_send.endswith("</s>"):
-                action_to_send = action_to_send[:-5]
+            action_to_send = completion_text_raw.strip()
+            if tokenizer.eos_token and action_to_send.endswith(tokenizer.eos_token):
+                action_to_send = action_to_send[: -len(tokenizer.eos_token)].rstrip()
+            elif action_to_send.endswith("</s>"):
+                action_to_send = action_to_send[:-5].rstrip()
 
             # Parse ReAct format
             if "Action:" in action_to_send:
@@ -254,6 +293,7 @@ def alfworld_rollout_first_prompt_and_completion(prompts: list[str], trainer, ma
         all_episode_action_masks.append(episode_action_mask)
         all_episode_turns.append(turn_number)
         all_episode_truncated.append(episode_truncated)
+        all_episode_mismatch_counts.append(mismatch_count)
 
     return {
         "prompt_ids": all_episode_prompt_ids,
@@ -263,6 +303,7 @@ def alfworld_rollout_first_prompt_and_completion(prompts: list[str], trainer, ma
         "action_mask": all_episode_action_masks,
         "episode_turns": all_episode_turns,
         "episode_truncated": all_episode_truncated,
+        "rollout_mismatch_count": all_episode_mismatch_counts,
     }
 
 def alfworld_rollout_reward_func(completions, **kwargs):

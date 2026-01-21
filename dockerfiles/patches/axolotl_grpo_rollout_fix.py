@@ -198,6 +198,18 @@ class ActionMaskedGRPOTrainer(AxolotlGRPOTrainer):
                 _replace_metric("rollout/episode_turns_mean", agg_turns.mean().item())
             _replace_metric("rollout/truncated_ratio", agg_is_truncated.float().mean().item())
 
+            if extra_fields and "rollout_mismatch_count" in extra_fields:
+                mismatch_counts = extra_fields["rollout_mismatch_count"]
+                if isinstance(mismatch_counts, list):
+                    mismatch_tensor = torch.tensor(mismatch_counts, device=device, dtype=torch.float32)
+                else:
+                    mismatch_tensor = torch.tensor(
+                        [float(mismatch_counts)] * len(completion_ids_list), device=device, dtype=torch.float32
+                    )
+                agg_mismatch = self.accelerator.gather(mismatch_tensor)
+                _replace_metric("rollout/mismatch_mean", agg_mismatch.mean().item())
+                _replace_metric("rollout/mismatch_ratio", (agg_mismatch > 0).float().mean().item())
+
         # Concatenate prompt_mask with completion_mask for logit computation
         prompt_completion_ids = torch.cat([prompt_ids, completion_ids], dim=1)  # (B, P+C)
         attention_mask = torch.cat([prompt_mask, completion_mask], dim=1)  # (B, P+C)
