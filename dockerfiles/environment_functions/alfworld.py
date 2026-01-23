@@ -67,34 +67,9 @@ def alfworld_rollout_first_prompt_and_completion(prompts: list[str], trainer, ma
     all_episode_action_masks: list[list[int]] = []
     all_episode_turns: list[int] = []
     all_episode_truncated: list[bool] = []
-    all_episode_mismatch_counts: list[int] = []
 
     tokenizer = trainer.processing_class
 
-    def _apply_chat_template_ids(messages: list[dict[str, str]], *, add_generation_prompt: bool) -> list[int] | None:
-        apply_fn = getattr(tokenizer, "apply_chat_template", None)
-        if apply_fn is None and hasattr(tokenizer, "tokenizer"):
-            apply_fn = getattr(tokenizer.tokenizer, "apply_chat_template", None)
-        if apply_fn is None:
-            return None
-        return apply_fn(messages, tokenize=True, add_generation_prompt=add_generation_prompt)
-
-    def _recover_delta_prompt_ids(messages: list[dict[str, str]]) -> list[int] | None:
-        if not messages or messages[-1].get("role") != "user":
-            return None
-        prev_messages = messages[:-1]
-        prev_prompt_ids = _apply_chat_template_ids(prev_messages, add_generation_prompt=False)
-        curr_prompt_ids = _apply_chat_template_ids(messages, add_generation_prompt=True)
-        if prev_prompt_ids is None or curr_prompt_ids is None:
-            return None
-        if curr_prompt_ids[: len(prev_prompt_ids)] == prev_prompt_ids:
-            return curr_prompt_ids[len(prev_prompt_ids) :]
-        prefix_len = 0
-        for prev_id, curr_id in zip(prev_prompt_ids, curr_prompt_ids, strict=False):
-            if prev_id != curr_id:
-                break
-            prefix_len += 1
-        return curr_prompt_ids[prefix_len:]
     DATA_LEN = 2500
     TIMEOUT = 2400
 
@@ -117,6 +92,11 @@ def alfworld_rollout_first_prompt_and_completion(prompts: list[str], trainer, ma
     else:
         num_generations = getattr(trainer, "num_generations_eval", getattr(trainer, "num_generations", 1))
     num_generations = max(1, int(num_generations))
+
+    # Validate batch size for proper grouping
+    if len(prompts) % num_generations != 0:
+        print(f"WARNING: Prompts count {len(prompts)} not divisible by num_generations {num_generations}")
+
     current_group_game_id = None
     current_group_index = None
 
@@ -130,13 +110,12 @@ def alfworld_rollout_first_prompt_and_completion(prompts: list[str], trainer, ma
         episode_completion_ids: list[int] = []
         episode_logprobs: list[float] = []
         episode_action_mask: list[int] = []
-        prev_full_ids: list[int] | None = None
+        prev_prompt_length = 0  # Track length, not token IDs (avoids BPE mismatch issues)
         invalid_count = 0
         done = False
         solved = False
         turn_number = 0
         episode_truncated = False
-        mismatch_count = 0
         
         # --- Reset Environment (POST /reset) ---
         # Reuse existing env_id, just change the game
@@ -185,41 +164,43 @@ def alfworld_rollout_first_prompt_and_completion(prompts: list[str], trainer, ma
                 done = True
                 break
 
+            # --- Length-based action mask building (verl-agent style) ---
+            # This avoids BPE mismatch issues by tracking lengths, not token IDs
             if turn_number == 0:
+                # First turn: all prompt tokens go to episode_prompt_ids
                 episode_prompt_ids = prompt_ids
-                prev_full_ids = prompt_ids.copy()
-            else:
-                if prev_full_ids is None:
-                    prev_full_ids = prompt_ids.copy()
-                elif prompt_ids[: len(prev_full_ids)] != prev_full_ids:
-                    # BPE mismatch - tokenizer produced different IDs for same prefix text
-                    # Attempt to recover delta prompt tokens to avoid dropping observations
-                    print(
-                        f"Warning: BPE mismatch at turn {turn_number} (expected prefix {len(prev_full_ids)}, "
-                        f"got {len(prompt_ids)} tokens). Attempting delta recovery."
-                    )
-                    mismatch_count += 1
-                    recovered_delta = _recover_delta_prompt_ids(messages)
-                    if recovered_delta:
-                        episode_completion_ids.extend(recovered_delta)
-                        episode_logprobs.extend([0.0] * len(recovered_delta))
-                        episode_action_mask.extend([0] * len(recovered_delta))
-                    # Reset prev_full_ids to current prompt to try to recover alignment
-                    prev_full_ids = prompt_ids.copy()
-                else:
-                    delta_prompt_ids = prompt_ids[len(prev_full_ids) :]
-                    if delta_prompt_ids:
-                        episode_completion_ids.extend(delta_prompt_ids)
-                        episode_logprobs.extend([0.0] * len(delta_prompt_ids))
-                        episode_action_mask.extend([0] * len(delta_prompt_ids))
-                    prev_full_ids = prompt_ids.copy()
+                prev_prompt_length = len(prompt_ids)
 
-            if completion_ids:
-                episode_completion_ids.extend(completion_ids)
-                episode_logprobs.extend(logprobs)
-                episode_action_mask.extend([1] * len(completion_ids))
-                if prev_full_ids is not None:
-                    prev_full_ids = prev_full_ids + completion_ids
+                # Completion tokens are action tokens (mask=1)
+                if completion_ids:
+                    episode_completion_ids.extend(completion_ids)
+                    episode_logprobs.extend(logprobs)
+                    episode_action_mask.extend([1] * len(completion_ids))
+
+                # Update length tracker to include completion
+                prev_prompt_length += len(completion_ids)
+            else:
+                # Subsequent turns: new tokens = observation + completion
+                curr_prompt_length = len(prompt_ids)
+
+                # Observation tokens = new tokens added since last turn (user message)
+                obs_token_count = curr_prompt_length - prev_prompt_length
+                if obs_token_count > 0:
+                    # Extract observation token IDs from the prompt
+                    obs_token_ids = prompt_ids[prev_prompt_length:curr_prompt_length]
+                    episode_completion_ids.extend(obs_token_ids)
+                    episode_logprobs.extend([0.0] * obs_token_count)  # Not from model
+                    episode_action_mask.extend([0] * obs_token_count)  # Not trainable
+                    # print(f"Turn {turn_number}: Added {obs_token_count} observation tokens (prev_len={prev_prompt_length}, curr_len={curr_prompt_length})")
+
+                # Completion tokens are action tokens (mask=1)
+                if completion_ids:
+                    episode_completion_ids.extend(completion_ids)
+                    episode_logprobs.extend(logprobs)
+                    episode_action_mask.extend([1] * len(completion_ids))
+
+                # Update length tracker for next turn
+                prev_prompt_length = curr_prompt_length + len(completion_ids)
 
             messages.append({"role": "assistant", "content": completion_text_raw})
 
@@ -285,6 +266,14 @@ def alfworld_rollout_first_prompt_and_completion(prompts: list[str], trainer, ma
         if not done and turn_number >= max_turns:
             episode_truncated = True
 
+        # # Validate action mask alignment
+        # if len(episode_action_mask) != len(episode_completion_ids):
+        #     print(f"ERROR: Action mask length mismatch! mask={len(episode_action_mask)}, completion={len(episode_completion_ids)}")
+        # else:
+        #     action_tokens = sum(episode_action_mask)
+        #     obs_tokens = len(episode_action_mask) - action_tokens
+        #     print(f"Episode complete: {turn_number} turns, {action_tokens} action tokens, {obs_tokens} observation tokens, reward={1.0 if solved else 0.0}")
+
         train_reward = (1.0 if solved else 0.0) - 0.01 * float(invalid_count)
         all_episode_prompt_ids.append(episode_prompt_ids)
         all_episode_completion_ids.append(episode_completion_ids)
@@ -293,7 +282,6 @@ def alfworld_rollout_first_prompt_and_completion(prompts: list[str], trainer, ma
         all_episode_action_masks.append(episode_action_mask)
         all_episode_turns.append(turn_number)
         all_episode_truncated.append(episode_truncated)
-        all_episode_mismatch_counts.append(mismatch_count)
 
     return {
         "prompt_ids": all_episode_prompt_ids,
@@ -303,7 +291,6 @@ def alfworld_rollout_first_prompt_and_completion(prompts: list[str], trainer, ma
         "action_mask": all_episode_action_masks,
         "episode_turns": all_episode_turns,
         "episode_truncated": all_episode_truncated,
-        "rollout_mismatch_count": all_episode_mismatch_counts,
     }
 
 def alfworld_rollout_reward_func(completions, **kwargs):

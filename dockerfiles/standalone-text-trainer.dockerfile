@@ -6,7 +6,9 @@ ENV UV_SYSTEM_PYTHON=1 \
 
 # Core deps
 RUN uv pip install packaging setuptools wheel awscli pydantic \
-      mlflow huggingface_hub aiohttp requests toml fastapi \
+      "protobuf>=3.20.0,<4.0.0" \
+      "mlflow>=2.8.0,<7.0.0" \
+      huggingface_hub aiohttp requests toml fastapi \
       uvicorn httpx loguru python-dotenv scipy numpy datasets \
       tenacity minio pandas tiktoken sentencepiece peft Pillow \
       PyYAML textstat langcheck detoxify \

@@ -402,6 +402,29 @@ class ActionMaskedGRPOTrainer(AxolotlGRPOTrainer):
         # Log prompt and completion texts
         self._logs["prompt"].extend(gather_object(prompts_text))
         self._logs["completion"].extend(gather_object(completions_text))
+        
+        # Log Alfworld episode completion texts if provided by rollout_func
+        if extra_fields:
+            # Debug: print what's in extra_fields
+            if mode == "train" and len(self._logs.get("prompt", [])) % 10 == 0:  # Print every 10th batch
+                print(f"DEBUG: extra_fields keys = {list(extra_fields.keys())}")
+            
+            if "episode_completion_texts" in extra_fields:
+                episode_texts = extra_fields["episode_completion_texts"]
+                # Ensure episode_texts is a list-of-lists aligned with completions
+                if isinstance(episode_texts, list) and len(episode_texts) > 0:
+                    # Initialize the log key if it doesn't exist
+                    if "rollout/episode_completion_texts" not in self._logs:
+                        self._logs["rollout/episode_completion_texts"] = []
+                    # Gather and extend episode texts (one list per episode)
+                    gathered_texts = gather_object(episode_texts)
+                    self._logs["rollout/episode_completion_texts"].extend(gathered_texts)
+                    if mode == "train" and len(self._logs["rollout/episode_completion_texts"]) % 10 == 0:
+                        print(f"DEBUG: Logged {len(gathered_texts)} episode completion text lists. Total logged: {len(self._logs['rollout/episode_completion_texts'])}")
+            else:
+                if mode == "train" and len(self._logs.get("prompt", [])) % 10 == 0:
+                    print(f"DEBUG: episode_completion_texts not found in extra_fields. Available keys: {list(extra_fields.keys())}")
+        
         for i, name in enumerate(self.reward_func_names):
             self._logs["rewards"][name].extend(rewards_per_func[:, i].tolist())
         self._logs["advantages"].extend(all_process_advantages.tolist())
