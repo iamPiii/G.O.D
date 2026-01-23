@@ -274,7 +274,7 @@ def alfworld_rollout_first_prompt_and_completion(prompts: list[str], trainer, ma
         #     obs_tokens = len(episode_action_mask) - action_tokens
         #     print(f"Episode complete: {turn_number} turns, {action_tokens} action tokens, {obs_tokens} observation tokens, reward={1.0 if solved else 0.0}")
 
-        train_reward = (1.0 if solved else 0.0) - 0.01 * float(invalid_count)
+        train_reward = (10.0 if solved else 0.0) - 0.1 * float(invalid_count)
         all_episode_prompt_ids.append(episode_prompt_ids)
         all_episode_completion_ids.append(episode_completion_ids)
         all_episode_logprobs.append(episode_logprobs)
