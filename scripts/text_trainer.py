@@ -115,8 +115,10 @@ def create_config(task_id, model, dataset, dataset_type, file_format, output_dir
     elif isinstance(dataset_type, EnvironmentDatasetType):
         # Switch based on the environment
         if dataset_type.environment_name == "alfworld":
-            config["trl"]["rollout_func"] = "alfworld.alfworld_rollout_first_prompt_and_completion"
-            config["trl"]["reward_funcs"] = ["alfworld.alfworld_rollout_reward_func"]
+            config["trl"]["rollout_func"] = "alfworld_fixed.alfworld_rollout_per_turn"
+            config["trl"]["reward_funcs"] = [
+                "reward_functions.environment_reward_fn"
+            ]
             config["trl"]["reward_weights"] = [1.0]
 
     if file_format != FileFormat.HF.value:

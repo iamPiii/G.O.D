@@ -16,7 +16,7 @@ rl: grpo
 vllm:
   tensor_parallel_size: 1
   gpu_memory_utilization: 0.3
-  max_model_len: 8192
+  max_model_len: 2560
   enable_prefix_caching: true
 trl:
   loss_type: dr_grpo
@@ -26,12 +26,12 @@ trl:
   use_vllm: true
   vllm_mode: colocate
   vllm_enable_sleep_mode: false
-  num_generations: 16
+  num_generations: 8
   use_liger_kernel: true
-  rollout_func:
+  rollout_func: dockerfiles.environment_functions.alfworld_fixed.alfworld_rollout_per_turn
 
 eval_strategy: "no"
-sequence_len: 16384
+sequence_len: 2560
 sample_packing: false
 pad_to_sequence_len: true
 trust_remote_code: true
@@ -67,10 +67,10 @@ flash_attention: true
 s2_attention:
 
 use_wandb: true
-wandb_project: Gradients-Rollout
+wandb_project: Gradients-Rollout-Alfworld-0.3.0
 wandb_entity:
 wandb_mode: online
-wandb_run: Gradients-Rollout`
+wandb_run: Gradients-Rollout
 wandb_runid: default
 
 eval_table_size:

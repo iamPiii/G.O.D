@@ -3,6 +3,7 @@
 import importlib
 import inspect
 import os
+from collections import defaultdict
 from typing import Any
 
 import torch
@@ -38,6 +39,78 @@ LOG = get_logger(__name__)
 
 class ActionMaskedGRPOTrainer(AxolotlGRPOTrainer):
     """GRPO trainer that applies an action mask to loss/IS/metrics."""
+
+    def _compute_advantages_by_uid(
+        self,
+        rewards: torch.Tensor,
+        uid_list: list[str],
+        traj_uid_list: list[str] | None = None,
+        compute_mean_std_cross_steps: bool = True,
+    ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
+        """
+        Compute GRPO advantages grouped by uid (verl-agent behavior).
+
+        Returns advantages, mean_grouped_rewards, std_rewards, is_std_zero.
+        """
+        if len(uid_list) != rewards.numel():
+            raise ValueError(
+                f"uid_list length ({len(uid_list)}) does not match rewards length ({rewards.numel()})."
+            )
+        if traj_uid_list is not None and len(traj_uid_list) != rewards.numel():
+            raise ValueError(
+                f"traj_uid_list length ({len(traj_uid_list)}) does not match rewards length ({rewards.numel()})."
+            )
+
+        device = rewards.device
+        mean_grouped_rewards = torch.zeros_like(rewards)
+        std_rewards = torch.zeros_like(rewards)
+        scores = rewards.clone()
+
+        uid_to_scores: dict[str, list[torch.Tensor]] = defaultdict(list)
+        seen_pairs: set[tuple[str, str]] = set()
+        for i, uid in enumerate(uid_list):
+            uid_str = str(uid)
+            if traj_uid_list is not None and not compute_mean_std_cross_steps:
+                pair = (uid_str, str(traj_uid_list[i]))
+                if pair in seen_pairs:
+                    continue
+                seen_pairs.add(pair)
+            uid_to_scores[uid_str].append(scores[i])
+
+        uid_to_mean: dict[str, torch.Tensor] = {}
+        uid_to_std: dict[str, torch.Tensor] = {}
+        for uid, score_list in uid_to_scores.items():
+            if len(score_list) == 1:
+                uid_to_mean[uid] = torch.tensor(0.0, device=device, dtype=rewards.dtype)
+                uid_to_std[uid] = torch.tensor(1.0, device=device, dtype=rewards.dtype)
+            elif len(score_list) > 1:
+                stacked = torch.stack(score_list)
+                uid_to_mean[uid] = stacked.mean()
+                uid_to_std[uid] = stacked.std()
+            else:
+                raise ValueError(f"No score in uid group: {uid}")
+
+        for i, uid in enumerate(uid_list):
+            uid_str = str(uid)
+            mean_grouped_rewards[i] = uid_to_mean[uid_str]
+            std_rewards[i] = uid_to_std[uid_str]
+
+        if self.scale_rewards == "batch":
+            if rewards.numel() > 1:
+                std_rewards = rewards.std().expand_as(rewards)
+            else:
+                std_rewards = torch.zeros_like(rewards)
+        elif self.scale_rewards not in ["group", "none"]:
+            raise ValueError(
+                f"Invalid value for scale_rewards: {self.scale_rewards}. Must be one of 'batch', 'group', or 'none'."
+            )
+
+        advantages = rewards - mean_grouped_rewards
+        is_std_zero = torch.isclose(std_rewards, torch.zeros_like(std_rewards))
+        if self.scale_rewards != "none":
+            advantages = advantages / (std_rewards + 1e-6)
+
+        return advantages, mean_grouped_rewards, std_rewards, is_std_zero
 
     def _generate_and_score_completions(self, inputs: list[dict[str, torch.Tensor | Any]]) -> dict[str, Any]:
         if getattr(self, "rollout_func", None) is None:
@@ -335,13 +408,20 @@ class ActionMaskedGRPOTrainer(AxolotlGRPOTrainer):
         completions_text = self.processing_class.batch_decode(completion_ids, skip_special_tokens=True)
 
         # Merge extra_fields from rollout_func into inputs for reward functions
-        if extra_fields:
-            for i, inp in enumerate(inputs):
-                for key, values in extra_fields.items():
-                    if isinstance(values, list) and i < len(values):
-                        inp[key] = values[i]
-                    elif not isinstance(values, list):
-                        inp[key] = values
+        # verl-agent pattern: expand inputs to match per-turn sample count
+        # uid is always present in extra_fields for rollout mode
+        uid_values = extra_fields["uid"]
+        num_per_turn_samples = len(uid_values)
+        expanded_inputs = []
+        for i in range(num_per_turn_samples):
+            sample = {}
+            for key, values in extra_fields.items():
+                if isinstance(values, list) and i < len(values):
+                    sample[key] = values[i]
+                elif not isinstance(values, list):
+                    sample[key] = values
+            expanded_inputs.append(sample)
+        inputs = expanded_inputs
 
         # Calculate rewards for each reward function. rewards_per_func aggregates rewards across all processes. This is
         # important because rewards will be normalized per group, and completions are distributed. We will later slice
@@ -351,41 +431,82 @@ class ActionMaskedGRPOTrainer(AxolotlGRPOTrainer):
         # Apply weights to each reward function's output and sum
         rewards = (rewards_per_func * self.reward_weights.to(device).unsqueeze(0)).nansum(dim=1)
 
-        # Compute grouped-wise rewards
-        num_generations = self.num_generations if mode == "train" else self.num_generations_eval
-        mean_grouped_rewards = rewards.view(-1, num_generations).mean(dim=1)
+        uid_list = None
+        if inputs and "uid" in inputs[0]:
+            uid_list = [inp.get("uid") for inp in inputs]
+            if any(uid is None for uid in uid_list):
+                uid_list = None
 
-        # Normalize the rewards to compute the advantages
-        mean_grouped_rewards = mean_grouped_rewards.repeat_interleave(num_generations, dim=0)
-        advantages = rewards - mean_grouped_rewards
-
-        if self.scale_rewards in ["group", "none"]:
-            # If self.scale_rewards = "none", we'll still log group level std
-            if num_generations > 1:
-                std_rewards = rewards.view(-1, num_generations).std(dim=1)
-                std_rewards = std_rewards.repeat_interleave(num_generations, dim=0)
-            else:  # this case doesn't occur during training, but could in eval when num_generations_eval=1
-                std_rewards = torch.zeros_like(rewards)
-        elif self.scale_rewards == "batch":
-            # Compute global std
-            if rewards.numel() > 1:
-                std_rewards = rewards.std().expand_as(rewards)
-            else:  # this case doesn't occur during training, but could in eval when num_generations_eval=batch_size=1
-                std_rewards = torch.zeros_like(rewards)
-        else:
-            raise ValueError(
-                f"Invalid value for scale_rewards: {self.scale_rewards}. Must be one of 'batch', 'group', or 'none'."
+        if uid_list is not None:
+            traj_uid_list = None
+            if inputs and "traj_uid" in inputs[0]:
+                traj_uid_list = [inp.get("traj_uid") for inp in inputs]
+                if any(tuid is None for tuid in traj_uid_list):
+                    traj_uid_list = None
+            gathered_uids = gather_object(uid_list)
+            if gathered_uids and isinstance(gathered_uids[0], list):
+                gathered_uids = [uid for uid_list in gathered_uids for uid in uid_list]
+            gathered_traj_uids = None
+            if traj_uid_list is not None:
+                gathered_traj_uids = gather_object(traj_uid_list)
+                if gathered_traj_uids and isinstance(gathered_traj_uids[0], list):
+                    gathered_traj_uids = [tuid for tuid_list in gathered_traj_uids for tuid in tuid_list]
+            if len(gathered_uids) != rewards.numel():
+                raise ValueError(
+                    f"Gathered uid_list length ({len(gathered_uids)}) does not match rewards length ({rewards.numel()})."
+                )
+            advantages, mean_grouped_rewards, std_rewards, is_std_zero = self._compute_advantages_by_uid(
+                rewards,
+                gathered_uids,
+                traj_uid_list=gathered_traj_uids,
+                compute_mean_std_cross_steps=getattr(self, "compute_mean_std_cross_steps", True),
             )
+        else:
+            # Compute grouped-wise rewards
+            num_generations = self.num_generations if mode == "train" else self.num_generations_eval
+            mean_grouped_rewards = rewards.view(-1, num_generations).mean(dim=1)
 
-        is_std_zero = torch.isclose(std_rewards, torch.zeros_like(std_rewards))
-        if self.scale_rewards != "none":
-            advantages = advantages / (std_rewards + 1e-4)
+            # Normalize the rewards to compute the advantages
+            mean_grouped_rewards = mean_grouped_rewards.repeat_interleave(num_generations, dim=0)
+            advantages = rewards - mean_grouped_rewards
+
+            if self.scale_rewards in ["group", "none"]:
+                # If self.scale_rewards = "none", we'll still log group level std
+                if num_generations > 1:
+                    std_rewards = rewards.view(-1, num_generations).std(dim=1)
+                    std_rewards = std_rewards.repeat_interleave(num_generations, dim=0)
+                else:  # this case doesn't occur during training, but could in eval when num_generations_eval=1
+                    std_rewards = torch.zeros_like(rewards)
+            elif self.scale_rewards == "batch":
+                # Compute global std
+                if rewards.numel() > 1:
+                    std_rewards = rewards.std().expand_as(rewards)
+                else:  # this case doesn't occur during training, but could in eval when num_generations_eval=batch_size=1
+                    std_rewards = torch.zeros_like(rewards)
+            else:
+                raise ValueError(
+                    f"Invalid value for scale_rewards: {self.scale_rewards}. Must be one of 'batch', 'group', or 'none'."
+                )
+
+            is_std_zero = torch.isclose(std_rewards, torch.zeros_like(std_rewards))
+            if self.scale_rewards != "none":
+                advantages = advantages / (std_rewards + 1e-4)
 
         # Slice to keep only the local part of the data
-        process_slice = slice(
-            self.accelerator.process_index * len(prompts),
-            (self.accelerator.process_index + 1) * len(prompts),
-        )
+        # verl-agent pattern: use actual sample count for per-turn mode
+        if uid_list is not None:
+            # Per-turn mode: use actual sample count from rollout
+            num_local_samples = len(completion_ids_list)
+            process_slice = slice(
+                self.accelerator.process_index * num_local_samples,
+                (self.accelerator.process_index + 1) * num_local_samples,
+            )
+        else:
+            # Standard mode: use original prompt count
+            process_slice = slice(
+                self.accelerator.process_index * len(prompts),
+                (self.accelerator.process_index + 1) * len(prompts),
+            )
         all_process_advantages = advantages.clone()  # keep the aggregated advantages for logging
         advantages = advantages[process_slice]
 
